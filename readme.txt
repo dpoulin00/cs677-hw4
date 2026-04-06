@@ -37,7 +37,7 @@ Leader Retirement:
 Retire with some small random probability each loop. Should be very small, e.g. 0.001, since we anticipate going through loops very quickly.
 
 Leader Election:
-A bully algorithm seems easiest to implement. Just use a ring based on node IDs. To make this actually interesting, when a leader resigns, we'll want to make
+A bully algorithm seems easiest to implement. To make this actually interesting, when a leader resigns, we'll want to make
 them unavailable for some random amount of time. They should not send or receive messages during this time. We'll need to make sure
 the socket queue doesn't fill up somehow. When they come back online, we shouldn't need to do anything special other than start them running again (thanks to how vector clocks work).
 I'd recommend rather than blocking to do this, we temporarily disable the running variable.
