@@ -24,9 +24,9 @@ Message Types:
 3. buy_pmnt: sent from leader to seller to represent payment after selling an item (unicast, no increment).
 4. upd_invn: sent from seller to leader when seller picks a new item to stock (unicast, increment). ()
 
-5. elc_resn: Sent by leader when they resign (multicast, increment).
-6. elc_poll: Sent by node x to all nodes with higher IDs to see if they're alive (multicast to higher IDs only, no increment).
-7. elc_okay: Resonse to elc_poll which tells elc_poll sender a node with higher id is alive (unicast, no increment).
+5. elc_rsin: Sent by leader when they resign (multicast, increment).
+6. elc_elec: Sent by node x to all nodes with higher IDs to see if they're alive (multicast to higher IDs only, no increment).
+7. elc_okay: Resonse to elc_elec which tells elc_elec sender a node with higher id is alive (unicast, no increment).
 8. elc_iwon: Sent by node if it receives no response to elc_poll to tell all other nodes it is newest trader (multicast, no increment).
 
 9. msg_recv: Sent in response to certain messages once they're received and processed. This is to avoid messages getting lsot when a leader resigns. If we dont get once
