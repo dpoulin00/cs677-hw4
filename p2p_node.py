@@ -30,6 +30,7 @@ class P2PNode:
         self.port_number = port_number
         # Attributes used by all nodes
         self.nodes = dict()
+        self.clock = dict()
         self.is_buyer = is_buyer
         self.is_seller = is_seller
         self.is_leader = False
@@ -51,6 +52,7 @@ class P2PNode:
     
     def set_nodes(self, nodes:dict):
         self.nodes = nodes
+        self.clock = {n: 0 for n in nodes.keys()}
     
     def run(self):
         """
