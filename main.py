@@ -1,4 +1,8 @@
+import pickle
 import random
+import socket
+import time
+from multiprocessing import Process
 import p2p_node as p2p
 
 
@@ -33,10 +37,33 @@ def dict_to_network(node_dict: dict) -> dict[int, p2p.P2PNode]:
     return dict()
 
 
+def run_network(network: dict[int, p2p.P2PNode]):
+    process_list = []
+    for nid in network.keys():
+        node = network[nid]
+        p = Process(target=node.start,)
+        process_list.append(p)
+        p.start()
+    time.sleep(10)
+    # Iterate through nodes and send each a STOP msg
+    for nid in network.keys():
+        node = network[nid]
+        port = node.port_number
+        msg = dict(type=p2p.ControlMsgType.STOP.name)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
+            node_socket.connect((socket.gethostname(), port))
+            serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
+            node_socket.sendall(serialized_msg)
+    # Wait for each node process to end
+    for p in process_list:
+        p.join()
+    return
+
 
 if __name__ == "__main__":
     start_port = 49152
     network = make_random_network(num_nodes=10, start_port=start_port)
+    run_network(network=network)
     pass
 
 

@@ -1,6 +1,13 @@
 import time
+import threading
+import socket
+import select
+import pickle
+from concurrent.futures.thread import ThreadPoolExecutor
+from datetime import datetime
 from enum import Enum
 import pandas as pd
+
 
 class Role(Enum):
     """Defines types of nodes."""
@@ -14,6 +21,22 @@ class Item(Enum):
     FISH = 1
     BOAR = 2
 
+class BuyMsgType(Enum):
+    INIT = 0  # Buyer sends to leader to start buy process (multicast, increment clock)
+    RESPONSE = 1  # Leader responds to buyer (unicast)
+    PAYMENT = 2  # Leader pays seller (unicast)
+    RESTOCK = 3  # Seller sends to leader to stock new inventory (unicast, increment clock)
+
+class ElecMsgType(Enum):
+    RESIGN = 0  # Leader multicasts to all nodes to resign (multicast, increment clock)
+    ELECT_ME = 1  # Node tries to elect self. (multicast to upstream nodes)
+    YOURE_OKAY = 2  # Response to ELECT_ME when we have higher ID. (unicast)
+    IWON = 3  # If nobody responds to ELECT_ME, we're the new leader. (multicast)
+
+class ControlMsgType(Enum):
+    STOP = 0  # Parent process sends to shuts down the node
+    REPORT_CMD = 1  # Parent process requests status from nodes
+    REPORT = 2  # Node sends status to parent process
 
 
 class P2PNode:
@@ -54,10 +77,17 @@ class P2PNode:
         self.nodes = nodes
         self.clock = {n: 0 for n in nodes.keys()}
     
-    def run(self):
+    def start(self):
         """
-        Sets self.running to True and spawns a thread for our run loop.
+        Sets self.running to True and starts run loop
+        Since we only have one loop, no need to spawn a thread for run loop.
         """
+        print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
+        self.running = True
+        self.run_loop()
+        #run_loop_thread = threading.Thread(target=self.run_loop)
+        #run_loop_thread.start()
+        #run_loop_thread.join()
         return
     
     def stop(self):
@@ -65,6 +95,8 @@ class P2PNode:
         Called when receiving stop message. Sets self.running to False, which
         will end our run loop.
         """
+        print(f"{datetime.now()}, status, node {self.id} stopping")
+        self.running = False
         return
     
     def run_loop(self):
@@ -79,26 +111,49 @@ class P2PNode:
         4. Routinely save logs. (could alternatively do this when resigning)
         5. Check if it's time to resign; if so, spawn thread to handle it.
         """
-        while self.running:
-            time.sleep(1)  # So we don't spam check if resign period has ended
-            while self.running and not self.resigned:
-                # Check if there's a new message. If so, handle it.
-                #if there's a message:
-                #    handle it
-
-                if not self.is_leader:
-                    if self.is_seller:
-                        # Check if it's time to buy and if so, do so.
-                        pass
-                    if self.is_buyer:
-                        # Check if it's time to buy and if so, do so.
-                        pass
+        # Open and set up server socket
+        with socket.socket() as server_socket:
+            # Below line allows us to rebind to same port while still in wait period. Useful for rerunning main.py quickly.
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.settimeout(100)  # Time out so we can gracefully exit once we stop seeing messages.
+            server_socket.bind((socket.gethostname(), self.port_number))
+            server_socket.listen(100)
+            # Opern thread executor, and enter listening loop
+            with ThreadPoolExecutor(max_workers=100) as executor:
+                while self.running:
+                    time.sleep(1)  # So we don't spam check if resign period has ended
+                    while self.running and not self.resigned:
+                        # Check if there's a new message. If so, handle it.
+                        msg_waiting, _, _ = select.select([server_socket], [], [], 0.1)
+                        if msg_waiting:
+                            socket_connection, addr = server_socket.accept()
+                            data = socket_connection.recv(4096)
+                            socket_connection.close()
+                            executor.submit(self.handle_msg, data, addr)
+                        if not self.is_leader:
+                            # Only buy and sell when not the leader
+                            if self.is_seller:
+                                # Check if it's time to buy and if so, do so.
+                                pass
+                            if self.is_buyer:
+                                # Check if it's time to buy and if so, do so.
+                                pass
         return
     
-    def handle_msg(self):
+    def handle_msg(self, data, addr):
         """
         Unpickles msg, checks type, and calls corresponding function to handle it.
         """
+        try:
+            msg = pickle.loads(data)
+        except Exception as e:
+            # Helpful for debugging multiple threads, processes
+            print(f"Pickle exception:")
+            print(e)
+        # Parse message type and call the corresponding function
+        match msg["type"]:
+            case ControlMsgType.STOP.name:
+                self.stop()
         return
     
     def send_msg(self, dest:list[int]):
