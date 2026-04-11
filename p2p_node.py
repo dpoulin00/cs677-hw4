@@ -35,6 +35,7 @@ class ElecMsgType(Enum):
 
 class ControlMsgType(Enum):
     STOP = 0  # Parent process sends to shuts down the node
+    # Below msgs could be used to include stop conditions for network
     REPORT_CMD = 1  # Parent process requests status from nodes
     REPORT = 2  # Node sends status to parent process
 
@@ -124,8 +125,7 @@ class P2PNode:
                     time.sleep(1)  # So we don't spam check if resign period has ended
                     while self.running and not self.resigned:
                         # Check if there's a new message. If so, handle it.
-                        msg_waiting, _, _ = select.select([server_socket], [], [], 0.1)
-                        if msg_waiting:
+                        while select.select([server_socket], [], [], 0.1)[0]:
                             socket_connection, addr = server_socket.accept()
                             data = socket_connection.recv(4096)
                             socket_connection.close()
