@@ -1,13 +1,25 @@
 import time
+from enum import Enum
 import pandas as pd
 
+class Role(Enum):
+    """Defines types of nodes."""
+    BUYER = 0
+    SELLER = 1
+    BUYER_AND_SELLER = 2
 
+class Item(Enum):
+    """Defines types of nodes."""
+    SALT = 0
+    FISH = 1
+    BOAR = 2
 
 
 
 class P2PNode:
-    def init(self, id:int, port_number:int, is_buyer:bool, is_seller:bool, nodes:dict,
-             shopping_list:list[dict]=None, selling_list:list[dict]=None):
+    def __init__(self, id: int, port_number: int, is_buyer: bool, is_seller: bool,
+                 shopping_list: list[dict] | None=None,
+                 selling_list: list[dict] | None=None):
         """
         Initializes node by recording whether eacah is a buyer or a seller,
         and a list of neighbors (all nodes in network). Also sets up
@@ -17,7 +29,7 @@ class P2PNode:
         self.id = id
         self.port_number = port_number
         # Attributes used by all nodes
-        self.nodes = nodes
+        self.nodes = dict()
         self.is_buyer = is_buyer
         self.is_seller = is_seller
         self.is_leader = False
@@ -36,6 +48,9 @@ class P2PNode:
         # Optional attributes used for testing
         self.shopping_list = shopping_list
         self.selling_list = selling_list
+    
+    def set_nodes(self, nodes:dict):
+        self.nodes = nodes
     
     def run(self):
         """
@@ -66,8 +81,8 @@ class P2PNode:
             time.sleep(1)  # So we don't spam check if resign period has ended
             while self.running and not self.resigned:
                 # Check if there's a new message. If so, handle it.
-                if there's a message:
-                    handle it
+                #if there's a message:
+                #    handle it
 
                 if not self.is_leader:
                     if self.is_seller:
