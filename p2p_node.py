@@ -52,6 +52,7 @@ class ActionStatus(Enum):
     STARTED = 0  # Action started, but not acked by leader
     ACKED = 1  # Action acked by leader
     DONE = 2  # Action finished.
+    NEEDS_RESEND = 3  # Action needs to be resent
 
 
 class P2PNode:
@@ -68,7 +69,7 @@ class P2PNode:
         self.id = id
         self.port_number = port_number
         self.server_socket = socket.socket()
-        self.node_log = pd.DataFrame(columns=["uid", "type", "status", "timestamp"])
+        self.node_log = pd.DataFrame(columns=["uid", "type", "status", "timestamp", "clock"])
         # Attributes used by all nodes
         self.nodes = nodes
         self.clock = {id:0 for id in nodes.keys()}
@@ -200,10 +201,15 @@ class P2PNode:
                     if self.is_buyer:
                         if datetime.now() > self.next_buy_ts:
                             self.buy()
+                    if True:  # Check if any entries have lingered too long, or if any need to be resent
+                        self.review_node_log()
                 elif self.is_leader:
-                    # If we are the leader, we check if it's been long enough that we need to resign.
+                    # If we are the leader,
+                    # check if we've caught up to any pending transcations in the leader log.
+                    # Also check if it's been long enough that we need to resign.
                     # When we come back after resigning, start a new election.
                     # FIXME: make this random. Will need to create a self.next_resign_ts to do so.
+                    self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     next_resign_ts = last_election_ts + timedelta(0, 5)  # days, seconds
                     if datetime.now() > next_resign_ts:
@@ -253,6 +259,20 @@ class P2PNode:
             serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
             node_socket.sendall(serialized_msg)
         return
+    
+    def reply_ack(self):
+        """
+        Used by leader to respond to BUY and RESTOCK msgs.
+        Sends an ACK back to nodes so they know the transaction has been added to the leader log.
+        Checks clock to see if we can process this transaction now, or if we should wait to 'catch up' to it.
+        """
+        return
+    
+    def ack(self):
+        """
+        When leader sends an initial reply_ack back, mark transaction as ACKED in the log.
+        """
+        return
 
     def buy(self):
         """
@@ -276,6 +296,22 @@ class P2PNode:
         """
         After trader finalizes sale, process payment from trader.
         To
+        """
+        return
+
+    def review_node_log(self):
+        """
+        Review node log.
+        If any items have status NEEDS_RESEND, resend them.
+        If transactions have gone unACKED for too long,
+        set self.leader to None to trigger election and set their status to NEEDS_RESEND.
+        """
+        return
+    
+    def review_leader_log(self):
+        """
+        Check if we've caught up to the clock in any transactions still in the log.
+        If so, we can process those transactions.
         """
         return
 
@@ -308,7 +344,8 @@ class P2PNode:
             type = ActionType.ELECT.name,
             uid = uid,
             timestamp = datetime.now(),
-            status = ActionStatus.STARTED.name
+            status = ActionStatus.STARTED.name,
+            clock = pd.NA
         )
         self.node_log.loc[-1] = log_entry
         # If we have the max ID, we win by default.
