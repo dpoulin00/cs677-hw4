@@ -178,33 +178,35 @@ class P2PNode:
         # Open thread executor, and enter listening loop
         with ThreadPoolExecutor(max_workers=100) as executor:
             while self.running:
+                # Accept msgs. If a STOP shows up, we need to break out of loop.
                 stopped = self.accept_msgs(executor=executor)
-                if stopped:  # If we received stopped message, we need to break loop
+                if stopped:
                     break
                 elif self.leader is None:
+                    # If there's no leader (either bc we just initialized or bc a msg went unacked),
+                    # we're in the election logic. If we haven't started an election in a while,
+                    # start a new one. Otherwise, wait to get an IWON
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     if (last_election_ts is None) or (last_election_ts + timedelta(0, 60) > datetime.now()):
-                        # if there hasn't been an eleciton, or it's been 60 seconds, start a new one
                         self.elect()
                     else:
-                        # otherwise, we'll keep waiting for an IWON message
                         time.sleep(1)
                 elif not self.is_leader:
-                    # Only buy and sell when not the leader
+                    # We have a leader but we're not it. Buy and sell items.
+                    # We only buy and sell after certian intervals.
                     if self.is_seller:
-                        # Check if it's time to restock and if so, do so.
                         if datetime.now() > self.next_restock_ts:
                             self.restock()
                     if self.is_buyer:
-                        # Check if it's time to buy and if so, do so.
                         if datetime.now() > self.next_buy_ts:
                             self.buy()
                 elif self.is_leader:
+                    # If we are the leader, we check if it's been long enough that we need to resign.
+                    # When we come back after resigning, start a new election.
+                    # FIXME: make this random. Will need to create a self.next_resign_ts to do so.
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     next_resign_ts = last_election_ts + timedelta(0, 5)  # days, seconds
                     if datetime.now() > next_resign_ts:
-                        # Check if time to resign. If so, resign (waiting a while in doing so),
-                        # clear queue, and then come back
                         self.resign()
                         self.elect()
         return
@@ -300,6 +302,7 @@ class P2PNode:
         If any response, we wait for new leader.
         If no response, send iwon message.
         """
+        # Add election to node log
         uid = uuid.uuid4()
         log_entry = dict(
             type = ActionType.ELECT.name,
@@ -308,8 +311,10 @@ class P2PNode:
             status = ActionStatus.STARTED.name
         )
         self.node_log.loc[-1] = log_entry
+        # If we have the max ID, we win by default.
         if self.id > max(self.nodes.keys()):
             self.iwon(uid)
+        # Otherwise, send out ELECT msgs to upstream nodes
         else:
             msg = dict(
                 type = ElecMsgType.ELECT.name,
@@ -333,7 +338,7 @@ class P2PNode:
     
     def im_okay(self, uid):
         """Mark corresponding election uid as done."""
-        #self.last_election_ts = datetime.now()
+        # Record election as finished
         self.node_log.loc[self.node_log["uid"] == uid, "status"] = ActionStatus.DONE.name
         self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = datetime.now()
         return
@@ -353,6 +358,7 @@ class P2PNode:
         self.leader = self.id
         self.is_leader = True
         print(f"{datetime.now()}, election, node {self.id} won election")
+        # Record election as done in node log
         self.node_log.loc[self.node_log["uid"] == uid, "status"] = ActionStatus.DONE.name
         self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = datetime.now()
         return
