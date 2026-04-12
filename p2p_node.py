@@ -26,18 +26,24 @@ class Item(Enum):
     BOAR = 2
 
 class BuyMsgType(Enum):
+    """Defines buy msg types."""
     INIT = 0  # Buyer sends to leader to start buy process (multicast, increment clock)
     RESPONSE = 1  # Leader responds to buyer (unicast)
     PAYMENT = 2  # Leader pays seller (unicast)
     RESTOCK = 3  # Seller sends to leader to stock new inventory (unicast, increment clock)
 
 class ElecMsgType(Enum):
+    """Defines election msg types."""
     RESIGN = 0  # Leader multicasts to all nodes to resign (multicast, increment clock)
     ELECT = 1  # Node tries to elect self. (multicast to upstream nodes)
     OKAY = 2  # Response to ELECT when we have higher ID. (unicast)
     IWON = 3  # If nobody responds to ELECT, we're the new leader. (multicast)
 
 class ControlMsgType(Enum):
+    """
+    Defines control message types.
+    Mostly for communication with parent process, except ACK, which is for ACKing transactions.
+    """
     STOP = 0  # Parent process sends to shuts down the node
     # Below msgs could be used to include stop conditions for network
     REPORT_CMD = 1  # Parent process requests status from nodes
@@ -45,17 +51,26 @@ class ControlMsgType(Enum):
     ACK = 3  # Leader sends this back to each node after certain msgs. A lack of this tells node leader resigned.
 
 class ActionType(Enum):
+    """Define action types (for log and msgs)"""
     ELECT = 0
     BUY = 1
     RESTOCK = 2
 
 class ActionStatus(Enum):
+    """
+    Define action statuses (from client perspective).
+    Used in node logs, let's us know what's started, acked, done, and what needs resending.
+    """
     STARTED = 0  # Action started, but not acked by leader
     ACKED = 1  # Action acked by leader
     DONE = 2  # Action finished.
     NEEDS_RESEND = 3  # Action needs to be resent
 
 class ActionProcessStatus(Enum):
+    """
+    Defines action status (from leader perspective).
+    Let's us know what transactions still need to be processed.
+    """
     RECIEVED = 0  # Action recieved, not done yet
     DONE = 1  # Action done
 
@@ -95,8 +110,7 @@ class P2PNode:
         self.next_buy_ts = datetime.now() + timedelta(0,random.randint(1,3))  # days, seconds
         # Attributes use by leaders and for elections
         self.resigned = False  # Set to true temporarily when we resign
-        self.sales = pd.DataFrame(columns=["timestamp", "id", "buyer", "item", "seller", "state"])
-        self.inventory = pd.DataFrame(columns=["timestamp", "item", "seller", "count", "price"])
+        self.leader_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "type", "item", "quantity", "status"])
         self.elections = dict()  # keys are UIDs, values are timestamps
         self.next_resign_ts = None
         self.last_election_ts = None
@@ -159,6 +173,13 @@ class P2PNode:
         return stopped
 
     def get_most_recent_election(self, status:str):
+        """
+        Get most recent election timestamp. Status tells us
+        if we're looking for DONE or STARTED elections.
+        Used to figure out when we've won an election (and thus need to send an IWON)
+        and when the last finished election was (so if it was a long time ago, and there's
+        still no leader, we can start a new one).
+        """
         df = self.node_log.copy()
         elect_mask = (df["type"]==ActionType.ELECT.name)
         status_mask = (df["status"]==status)
@@ -172,7 +193,7 @@ class P2PNode:
     def append_to_node_log(self, uid, timestamp, clock: dict, type: str, status: str,
                            item: str | None, quantity: int | None):
         """
-        Add to node_log
+        Add entry to node_log.
         """
         # FIXME: add log lock
         log_entry = dict(
@@ -197,10 +218,16 @@ class P2PNode:
         return
     
     def append_to_leader_log(self, msg):
+        """
+        Append transaction to leader log. If we already have this UID in the log,
+        don't add it.
+        """
         # FIXME: add log lock
-        log_entry = dict(msg)
+        # FIXME: actually implement adding to log.
+        log_entry = dict()
         log_entry["status"] = ActionProcessStatus.RECIEVED.name
-        self.node_log.loc[len(self.node_log)] = log_entry
+        if msg["uid"] not in self.leader_log["uid"].to_list():
+            self.leader_log.loc[len(self.leader_log)] = log_entry
         return
     
     def run_loop(self):
@@ -275,8 +302,6 @@ class P2PNode:
         match msg["type"]:
             case BuyMsgType.INIT.name:
                 if self.is_leader:
-                    # FIXME: it's currently possible for us to get here and send an ACK when we're
-                    # not the leader. Pick up the log lock, then check the self.is_leader attribute
                     self.append_to_leader_log(msg)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
             case BuyMsgType.RESPONSE.name:
@@ -328,7 +353,14 @@ class P2PNode:
             uid=uid,
             sender=self.id
         )
-        self.send_msg(msg=msg, dest=dest)
+        if self.is_leader:
+            # Make a final check here. If we're still the leader, our adding this
+            # request to the log would be included in any saved logs, and thus it's
+            # safe to send the ack. If we're no longer the leader, we may or
+            # may not have gotten the request into the log at the time.
+            # FIXME: The node will need to resend it; leaders will thus need to 
+            # be able to figure out if they're getting a request they already have.
+            self.send_msg(msg=msg, dest=dest)
         return
     
     def recieve_ack(self, msg):
