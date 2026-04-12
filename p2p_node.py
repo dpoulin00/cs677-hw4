@@ -4,6 +4,7 @@ import socket
 import select
 import time
 import threading
+from typing import Dict
 import uuid
 from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import timedelta
@@ -41,7 +42,7 @@ class ControlMsgType(Enum):
     # Below msgs could be used to include stop conditions for network
     REPORT_CMD = 1  # Parent process requests status from nodes
     REPORT = 2  # Node sends status to parent process
-    REPLY = 3  # Leader sends this back to each node after a msg. A lack of this tells node leader resigned.
+    ACK = 3  # Leader sends this back to each node after certain msgs. A lack of this tells node leader resigned.
 
 class ActionType(Enum):
     ELECT = 0
@@ -54,12 +55,16 @@ class ActionStatus(Enum):
     DONE = 2  # Action finished.
     NEEDS_RESEND = 3  # Action needs to be resent
 
+class ActionProcessStatus(Enum):
+    RECIEVED = 0  # Action recieved, not done yet
+    DONE = 1  # Action done
+
 
 class P2PNode:
     def __init__(self, id: int, port_number: int, is_buyer: bool, is_seller: bool,
-                 nodes: dict[int, int],  # keys are IDs, vals are ports
-                 shopping_list: list[dict] | None=None,
-                 selling_list: list[dict] | None=None):
+                 nodes: Dict[int, int],  # keys are IDs, vals are ports
+                 shopping_list: list[Dict] | list=[],
+                 selling_list: list[Dict] | list=[]):
         """
         Initializes node by recording whether eacah is a buyer or a seller,
         and a list of neighbors (all nodes in network). Also sets up
@@ -69,7 +74,7 @@ class P2PNode:
         self.id = id
         self.port_number = port_number
         self.server_socket = socket.socket()
-        self.node_log = pd.DataFrame(columns=["uid", "type", "status", "timestamp", "clock"])
+        self.node_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "type", "item", "quantity", "status"])
         # Attributes used by all nodes
         self.nodes = nodes
         self.clock = {id:0 for id in nodes.keys()}
@@ -164,6 +169,40 @@ class P2PNode:
             last_election = past_elections["timestamp"].max()
         return last_election
     
+    def append_to_node_log(self, uid, timestamp, clock: dict, type: str, status: str,
+                           item: str | None, quantity: int | None):
+        """
+        Add to node_log
+        """
+        # FIXME: add log lock
+        log_entry = dict(
+            uid = uid,
+            timestamp = timestamp,
+            clock = clock,
+            type = type,
+            item = item,
+            quantity = quantity,
+            status = status
+        )
+        self.node_log.loc[len(self.node_log)] = log_entry
+        return
+
+    def update_node_log(self, uid, timestamp, status: str):
+        """
+        Update this UID's entry in node log.
+        """
+        # FIXME: add log lock
+        self.node_log.loc[self.node_log["uid"] == uid, "status"] = status
+        self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
+        return
+    
+    def append_to_leader_log(self, msg):
+        # FIXME: add log lock
+        log_entry = dict(msg)
+        log_entry["status"] = ActionProcessStatus.RECIEVED.name
+        self.node_log.loc[len(self.node_log)] = log_entry
+        return
+    
     def run_loop(self):
         """
         Called when node starts running. 
@@ -187,11 +226,22 @@ class P2PNode:
                     # If there's no leader (either bc we just initialized or bc a msg went unacked),
                     # we're in the election logic. If we haven't started an election in a while,
                     # start a new one. Otherwise, wait to get an IWON
+                    ongoing_election_ts = self.get_most_recent_election(status=ActionStatus.STARTED.name)
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
-                    if (last_election_ts is None) or (last_election_ts + timedelta(0, 60) > datetime.now()):
-                        self.elect()
-                    else:
-                        time.sleep(1)
+                    if ongoing_election_ts is None:
+                        # If no ongoing election, and it's been a while since the last election, start
+                        # a new one. Otherwise, wait.
+                        if last_election_ts is None or last_election_ts + timedelta(0, 10) < datetime.now():
+                            self.elect()
+                        else:
+                            time.sleep(1)  # sleep to avoid spamming through loop
+                    elif ongoing_election_ts is not None:
+                        # if there is an ongoing election, and it's been a while, declare victory.
+                        # Otherwise, keep waiting.
+                        if ongoing_election_ts + timedelta(0, 10) < datetime.now():  # If we've won election
+                            self.iwon()
+                        else:
+                            time.sleep(1)
                 elif not self.is_leader:
                     # We have a leader but we're not it. Buy and sell items.
                     # We only buy and sell after certian intervals.
@@ -211,9 +261,9 @@ class P2PNode:
                     # FIXME: make this random. Will need to create a self.next_resign_ts to do so.
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
-                    next_resign_ts = last_election_ts + timedelta(0, 5)  # days, seconds
+                    next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
                     if datetime.now() > next_resign_ts:
-                        self.resign()
+                        self.resign(sleep=True)
                         self.elect()
         return
     
@@ -224,13 +274,19 @@ class P2PNode:
         # Parse message type and call the corresponding function
         match msg["type"]:
             case BuyMsgType.INIT.name:
-                pass
+                if self.is_leader:
+                    # FIXME: it's currently possible for us to get here and send an ACK when we're
+                    # not the leader. Pick up the log lock, then check the self.is_leader attribute
+                    self.append_to_leader_log(msg)
+                    self.send_ack(uid=msg["uid"], dest=msg["sender"])
             case BuyMsgType.RESPONSE.name:
                 pass
             case BuyMsgType.PAYMENT.name:
                 pass
             case BuyMsgType.RESPONSE.name:
                 pass
+            case ControlMsgType.ACK.name:
+                self.recieve_ack(msg)
             case ElecMsgType.RESIGN.name:
                 if self.leader == msg["sender"]:
                     self.leader = None
@@ -241,6 +297,7 @@ class P2PNode:
             case ElecMsgType.OKAY.name:
                 self.im_okay(uid=msg["uid"])
             case ElecMsgType.IWON.name:
+                # FIXME: We need to do more here. If this node is leader, we need to save to log
                 self.leader = msg["sender"]
             case ControlMsgType.STOP.name:
                 self.stop()
@@ -260,24 +317,63 @@ class P2PNode:
             node_socket.sendall(serialized_msg)
         return
     
-    def reply_ack(self):
+    def send_ack(self, uid, dest):
         """
         Used by leader to respond to BUY and RESTOCK msgs.
         Sends an ACK back to nodes so they know the transaction has been added to the leader log.
         Checks clock to see if we can process this transaction now, or if we should wait to 'catch up' to it.
         """
+        msg = dict(
+            type = ControlMsgType.ACK.name,
+            uid=uid,
+            sender=self.id
+        )
+        self.send_msg(msg=msg, dest=dest)
         return
     
-    def ack(self):
+    def recieve_ack(self, msg):
         """
         When leader sends an initial reply_ack back, mark transaction as ACKED in the log.
         """
+        uid = msg["uid"]
+        curr_status = self.node_log.loc[self.node_log["uid"] == uid]["status"].iloc[0]
+        if curr_status != ActionStatus.DONE.name:
+            self.update_node_log(uid=uid, timestamp=datetime.now(),
+                                 status=ActionStatus.DONE.name)
         return
 
     def buy(self):
         """
         Initiate buy request by selecting random item and messaging leader.
         """
+        # Initialize buy request
+        uid = uuid.uuid4()
+        if len(self.shopping_list) == 0:
+            item = random.choice(list(Item)).name
+            quantity = random.choice(range(1, 10))
+        else:
+            item_quantity_dict = self.shopping_list.pop()
+            item = list(item_quantity_dict.keys())[0]
+            quantity = item_quantity_dict[item]
+
+        # Add to log
+        # FIXME: add clock lock
+        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=self.clock,
+                                type=ActionType.BUY.name, item=item, quantity=quantity,
+                                status=ActionStatus.STARTED.name)
+        print(f"{datetime.now()}, buy, node {self.id} is buying {item}")
+        # Send out request
+        msg = dict(
+            uid = uid,
+            sender = self.id,
+            clock = self.clock,
+            type = BuyMsgType.INIT.name,
+            item = item,
+            quantity = quantity
+        )
+        for nid in self.nodes.keys():
+            self.send_msg(msg=msg, dest=nid)
+        self.next_buy_ts = datetime.now() + timedelta(0, 10)
         return
     
     def finalize_buy(self):
@@ -306,6 +402,25 @@ class P2PNode:
         If transactions have gone unACKED for too long,
         set self.leader to None to trigger election and set their status to NEEDS_RESEND.
         """
+        # print(f"{datetime.now()}, review, node {self.id} is reviewing log")
+        log = self.node_log.copy()
+        log = log[log["status"] != ActionStatus.DONE.name]
+        for i, row in log.iterrows():
+            uid = row["uid"]
+            status = row["status"]
+            timestamp = row["timestamp"]
+            if status == ActionStatus.NEEDS_RESEND.name:
+                # FIXME: implement resending
+                pass
+            elif status == ActionStatus.STARTED.name:
+                # Check if action has gone unacked for too long.
+                # If so, set leader to False and break out of
+                # loop. This will lead to an election
+                if timestamp + timedelta(0, 15) < datetime.now():
+                    self.leader = None
+                    self.node_log.loc[self.node_log["status"] == ActionStatus.STARTED.name,
+                                      "status"] = ActionStatus.DONE.name
+                    break
         return
     
     def review_leader_log(self):
@@ -315,20 +430,28 @@ class P2PNode:
         """
         return
 
-    def resign(self):
+    def resign(self, sleep):
         """
         Called when leader resigns.
         Sets self.is_leader to False, and waits a random (long) interval.
         Calls self.elect() after coming back online.
         Blocking here is okay, since this function does nothing else.
         """
+        # FIXME: pick up log lock, and save log. Then delete log from node. Make sure to
+        # set is_leader to False before releasing lock, so that our message handling knows not to send an ACK
         print(f"{datetime.now()}, election, node {self.id} is resigning")
         self.is_leader = False
-        time.sleep(random.choice(range(60, 120)))
-        # After coming back online, clear queue
-        while select.select([self.server_socket], [], [], 0.1)[0]:
-            socket_connection, addr = self.server_socket.accept()
-            socket_connection.recv(4096)
+        # Go offline for wait_interval seconds. Keep socket queue clear while offline.
+        if sleep:
+            wait_interval = random.choice(range(35, 65))
+            wait_time = 0
+            while wait_time < wait_interval:
+                while select.select([self.server_socket], [], [], 0.1)[0]:
+                    socket_connection, addr = self.server_socket.accept()
+                    socket_connection.recv(4096)
+                time.sleep(1)
+                wait_time += 1
+            print(f"{datetime.now()}, node, node {self.id} is back online")
         return
     
     def elect(self):
@@ -338,19 +461,19 @@ class P2PNode:
         If any response, we wait for new leader.
         If no response, send iwon message.
         """
+        print(f"{datetime.now()}, election, node {self.id} is starting election")
         # Add election to node log
         uid = uuid.uuid4()
-        log_entry = dict(
-            type = ActionType.ELECT.name,
-            uid = uid,
-            timestamp = datetime.now(),
-            status = ActionStatus.STARTED.name,
-            clock = pd.NA
-        )
-        self.node_log.loc[-1] = log_entry
+        self.append_to_node_log(type=ActionType.ELECT.name,
+                                uid = uid,
+                                timestamp = datetime.now(),
+                                status = ActionStatus.STARTED.name,
+                                clock = dict(),
+                                item=None,
+                                quantity=None)
         # If we have the max ID, we win by default.
         if self.id > max(self.nodes.keys()):
-            self.iwon(uid)
+            self.iwon()
         # Otherwise, send out ELECT msgs to upstream nodes
         else:
             msg = dict(
@@ -376,11 +499,13 @@ class P2PNode:
     def im_okay(self, uid):
         """Mark corresponding election uid as done."""
         # Record election as finished
-        self.node_log.loc[self.node_log["uid"] == uid, "status"] = ActionStatus.DONE.name
-        self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = datetime.now()
+        self.update_node_log(uid=uid, status=ActionStatus.DONE.name, timestamp=datetime.now())
+        # If currently the leader, we must now resign
+        if self.is_leader:
+            self.resign(sleep=False)
         return
     
-    def iwon(self, uid):
+    def iwon(self):
         """
         Send out an iwon message if no node responds to our elect message.
         """
@@ -395,7 +520,13 @@ class P2PNode:
         self.leader = self.id
         self.is_leader = True
         print(f"{datetime.now()}, election, node {self.id} won election")
-        # Record election as done in node log
-        self.node_log.loc[self.node_log["uid"] == uid, "status"] = ActionStatus.DONE.name
-        self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = datetime.now()
+        # Record all ongoing elections as done in node log
+        # FIXME: add log lock
+        election_mask = (self.node_log["type"] == ActionType.ELECT.name)
+        started_mask = (self.node_log["status"] == ActionStatus.STARTED.name)
+        self.node_log.loc[election_mask & started_mask, "status"] = ActionStatus.DONE.name
+        self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
+        # Wait a few seconds, then pick up the log. This gives old leader time to save it.
+        time.sleep(10)
+        # FIXME: pick up log here
         return

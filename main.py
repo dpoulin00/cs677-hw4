@@ -4,6 +4,8 @@ import socket
 import time
 from multiprocessing import Process
 import p2p_node as p2p
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 def make_random_network(num_nodes: int, start_port) -> dict[int, p2p.P2PNode]:
@@ -61,7 +63,7 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int):
 if __name__ == "__main__":
     start_port = 49152
     network = make_random_network(num_nodes=5, start_port=start_port)
-    run_network(network=network, run_time=100)
+    run_network(network=network, run_time=10000)
     pass
 
 
