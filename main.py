@@ -55,6 +55,8 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int):
             node_socket.connect((socket.gethostname(), port))
             serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
             node_socket.sendall(serialized_msg)
+            # FIXME: low priority, but it a node is resigned at time of STOP, it might discard the stop.
+            # Could set up logic here to resend in such a case.
     # Wait for each node process to end
     for p in process_list:
         p.join()

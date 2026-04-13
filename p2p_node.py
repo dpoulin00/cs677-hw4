@@ -129,6 +129,7 @@ class P2PNode:
     
     def start(self):
         """
+        Called by parent process to start node running.
         Sets self.running to True, sets up socket, and starts run loop
         Since we only have one loop, no need to spawn a thread for run loop.
         """
@@ -150,8 +151,9 @@ class P2PNode:
     
     def stop(self):
         """
-        Called when receiving stop message. Sets self.running to False, which
-        will end our run loop.
+        Called when we receive stop message from parent process.
+        Sets self.running to False, which will end our run loop.
+        Closes server socket.
         """
         print(f"{datetime.now()}, status, node {self.id} stopping")
         self.running = False
@@ -163,11 +165,12 @@ class P2PNode:
         Called when node starts running. 
         Runs a loop that does the following:
         1. Check for and handle all incoming messages. Spawn thread to handle each.
-        If not the leader, it also does the following:
-        2. Check if it's time to send a buy request: if so, spawn thread to handle it.
-        3. Check if it's time to stock an item; if so, spawn thread to handle it.
-        If the leader, it also does the following:
-        4. Routinely save logs. (could alternatively do this when resigning)
+        If no leader exists:
+        2. Enter election logic.
+        If some other node is the leader, it also does the following:
+        3. Check if it's time to send a buy request: if so, spawn thread to handle it.
+        4. Check if it's time to stock an item; if so, spawn thread to handle it.
+        If this node is the leader, it also does the following:
         5. Check if it's time to resign; if so, spawn thread to handle it.
         """
         # Open thread executor, and enter listening loop
@@ -178,13 +181,14 @@ class P2PNode:
                 if stopped:
                     break
                 elif self.leader is None:
-                    # If there's no leader (either bc we just initialized or bc a msg went unacked),
+                    # If there's no leader (either bc we just initialized or bc a buy or restock msg went unacked),
                     # we're in the election logic. If we haven't started an election in a while,
                     # start a new one. Otherwise, wait to get an IWON
                     ongoing_election_ts = self.get_most_recent_election(status=ActionStatus.STARTED.name)
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     if ongoing_election_ts is None:
-                        # If no ongoing election, and it's been a while since the last election, start
+                        # If no ongoing election, and it's been a while since the last election (or
+                        # there was no last election, i.e. we just initialized), start
                         # a new one. Otherwise, wait.
                         if last_election_ts is None or last_election_ts + timedelta(0, 30) < datetime.now():
                             self.elect()
@@ -193,27 +197,30 @@ class P2PNode:
                     elif ongoing_election_ts is not None:
                         # if there is an ongoing election, and it's been a while, declare victory.
                         # Otherwise, keep waiting.
-                        if ongoing_election_ts + timedelta(0, 10) < datetime.now():  # If we've won election
+                        if ongoing_election_ts + timedelta(0, 10) < datetime.now():
                             self.iwon()
                         else:
                             time.sleep(1)
                 elif not self.is_leader:
                     # We have a leader but we're not it. Buy and sell items.
-                    # We only buy and sell after certian intervals.
+                    # We only buy and sell after certain intervals.
                     if self.is_seller:
                         if datetime.now() > self.next_restock_ts:
                             self.restock()
                     if self.is_buyer:
                         if datetime.now() > self.next_buy_ts:
                             self.buy()
-                    if True:  # Check if any entries have lingered too long, or if any need to be resent
+                    if True:
+                        # Check if any entries have lingered too long (which we'll take to mean
+                        # the leader went down), or if any need to be resent
                         self.review_node_log()
                 elif self.is_leader:
-                    # If we are the leader,
-                    # check if we've caught up to any pending transcations in the leader log.
+                    # If we are the leader, check if we've caught up to any pending
+                    # transcations in the leader log. If so, handle these.
                     # Also check if it's been long enough that we need to resign.
                     # When we come back after resigning, start a new election.
-                    # FIXME: make this random. Will need to create a self.next_resign_ts to do so.
+                    # FIXME: make time between winning election and resigning random
+                    # by choosing a random time delta at time of winning.
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
@@ -224,19 +231,14 @@ class P2PNode:
     
     def accept_msgs(self, executor) -> bool:
         """
-        Call this to iterate through socket messages and parse each.
+        Called by run_loop to iterate through socket messages and parse each.
         Returned bool indicates whether we received the STOP message.
-        If returning True, we did receive it.
+        If returning True, we did receive a stop message.
         """
-        if self.id == 4:
-            pass
         stopped = False
         # Check if there's a new message. If so, handle it
         while select.select([self.server_socket], [], [], 0.1)[0]:
-            if self.id == 4:
-                pass
             self.num_accepted_msgs += 1
-            #print(f"node {self.id} has accepted {self.num_accepted_msgs}")
             socket_connection, addr = self.server_socket.accept()
             data = socket_connection.recv(4096)
             socket_connection.close()
@@ -246,6 +248,9 @@ class P2PNode:
                 # Helpful for debugging multiple threads, processes
                 print(f"Pickle exception:")
                 print(e)
+            # If the msg isn't a STOP, spawn a thread. But if
+            # it is a stop, we handle here, such that we
+            # can return False (and thus exit the run_loop)
             if msg["type"] != ControlMsgType.STOP.name:
                 executor.submit(self.handle_msg, msg, addr)
             else:
@@ -262,11 +267,11 @@ class P2PNode:
         match msg["type"]:
             case BuyMsgType.INIT.name:
                 if self.is_leader:
-                    self.append_to_leader_log(msg)
+                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
             case BuyMsgType.RESTOCK.name:
                 if self.is_leader:
-                    self.append_to_leader_log(msg)
+                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
             case BuyMsgType.PAYMENT.name:
                 pass
@@ -292,10 +297,8 @@ class P2PNode:
     
     def send_msg(self, msg, dest:int):
         """
-        Send message to all nodes in dest.
-        dest is a list of node IDs.
-        If we are unable to reach a node, we should catch that.
-        If the unreachable node is a leader, initiate an election. Otherwise, jsut move on.
+        Called anytime we need to send a msg.
+        Send message to node whose ID is dest.
         """
         self.num_sent_msgs += 1
         #print(self.num_sent_msgs)
@@ -308,9 +311,9 @@ class P2PNode:
     
     def send_ack(self, uid, dest):
         """
-        Used by leader to respond to BUY and RESTOCK msgs.
-        Sends an ACK back to nodes so they know the transaction has been added to the leader log.
-        Checks clock to see if we can process this transaction now, or if we should wait to 'catch up' to it.
+        Whenever the leader gets a BY or RESTOCK msgs, the leader adds them to the 
+        leader log and then calls this, such that the senders know their transcations are in the
+        log.
         """
         msg = dict(
             type = ControlMsgType.ACK.name,
@@ -321,7 +324,8 @@ class P2PNode:
         # If we're still the leader, our adding this
         # request to the log would be included in any saved logs, and thus it's
         # safe to send the ack. If we're no longer the leader, we may or
-        # may not have gotten the request into the log at the time.
+        # may not have gotten the request into the log in time. Since we're
+        # note sure, don't send an ACK.
         # The node will need to resend it; leaders will thus need to 
         # be able to figure out if they're getting a request they already have.
         self.is_leader_lock.acquire_lock()
@@ -333,7 +337,7 @@ class P2PNode:
     
     def recieve_ack(self, msg):
         """
-        When leader sends an initial reply_ack back, mark transaction as ACKED in the log.
+        When leader sends an initial ACK back, mark transaction as ACKED in the log.
         """
         uid = msg["uid"]
         print(f"{datetime.now()}, {uid}, node {self.id} received ack")
@@ -356,7 +360,7 @@ class P2PNode:
             quantity = item_quantity_dict[item]
 
         # Add to log
-        # FIXME: add clock lock
+        # FIXME: add clock lock? May not be needed.
         self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=self.clock,
                                 type=ActionType.BUY.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
@@ -396,12 +400,14 @@ class P2PNode:
 
     def review_node_log(self):
         """
-        Review node log.
-        If any items have status NEEDS_RESEND, resend them.
+        Called by each non-leader node during the run_loop.
+        If any items in the node log have status NEEDS_RESEND, resend them.
         If transactions have gone unACKED for too long,
         set self.leader to None to trigger election and set their status to NEEDS_RESEND.
         """
-        # print(f"{datetime.now()}, review, node {self.id} is reviewing log")
+        # FIXME: First, check the STARTED transactions to see if they've
+        # lingered too long. This will save the resending of msgs when the
+        # leader is down.
         log = self.node_log.copy()
         log = log[log["status"] != ActionStatus.DONE.name]
         for i, row in log.iterrows():
@@ -426,17 +432,20 @@ class P2PNode:
     
     def review_leader_log(self):
         """
+        Called in each run_loop by the leader.
         Check if we've caught up to the clock in any transactions still in the log.
         If so, we can process those transactions.
         """
         return
 
-    def resign(self, sleep):
+    def resign(self, sleep:bool):
         """
         Called when leader resigns.
-        Sets self.is_leader to False, and waits a random (long) interval.
-        Calls self.elect() after coming back online.
-        Blocking here is okay, since this function does nothing else.
+        Saves leader log.
+        Sets self.is_leader to False.
+        If sleep is True, we also wait for a while here to simulate a node
+        being down (a leader calling in sick). While down, we keep
+        the queue empty.
         """
         # Pick up log lock, and save log. Then delete log from node. Make sure to
         # set is_leader to False before releasing lock, so that our message handling knows not to send an ACK
@@ -444,7 +453,7 @@ class P2PNode:
         self.is_leader_lock.acquire_lock()
         self.is_leader = False
         self.leader_log_lock.acquire_lock()
-        self.leader_log.to_csv(self.leader_log_path)
+        self.leader_log.to_csv(self.leader_log_path, index=False)
         self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log
         self.leader_log_lock.release_lock()
         self.is_leader_lock.release_lock()
@@ -463,10 +472,13 @@ class P2PNode:
     
     def elect(self):
         """
-        Called when leader goes down, or this node comes back online after resigning.
+        Called when leader goes down, this node comes back online after resigning,
+        or an elect msg is received.
         Sends elect message to all nodes with higher ID than this node.
         If any response, we wait for new leader.
         If no response, send iwon message.
+        Note that we won't start a new election if we already have one open.
+        Note also that we track elections in the node_log.
         """
         # If we haven't started an election, do so now
         if self.get_most_recent_election(status=ActionStatus.STARTED.name) is not None:
@@ -509,7 +521,11 @@ class P2PNode:
         return
     
     def im_okay(self, uid):
-        """Mark corresponding election uid as done."""
+        """
+        Called when we recieve an OKAY msg.
+        Mark corresponding election uid as done.
+        If this node is the leader, we resign.
+        """
         # Record election as finished
         self.update_node_log(uid=uid, status=ActionStatus.DONE.name, timestamp=datetime.now())
         # If currently the leader, we must now resign
@@ -520,6 +536,10 @@ class P2PNode:
     def iwon(self):
         """
         Send out an iwon message if no node responds to our elect message.
+        This is also where we set ourselves as the leader, including setting
+        is_leader to True, setting leader to this node, and picking up the leader log.
+        Note we have to wait to pick up the leader log, such that the previous leader
+        has time to save it.
         """
         # We'll only pick up the log from the disk if we weren't already the leader
         already_leader = self.is_leader
@@ -547,12 +567,17 @@ class P2PNode:
             self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
                 self.leader_log = pd.read_csv(self.leader_log_path)
-            print(self.leader_log)
+            #print(self.leader_log)
             self.leader_log_lock.release_lock()
         self.node_log_lock.release_lock()
         return
     
     def youwon(self, new_leader):
+        """
+        Called when we receive an IWON message.
+        If this node is the leader, resign (which will save the leader log).
+        Marks all ongoing elections as done.
+        """
         if self.is_leader:
             self.resign(sleep=False)
         self.leader = new_leader
@@ -606,7 +631,7 @@ class P2PNode:
 
     def update_node_log(self, uid, timestamp, status: str):
         """
-        Update this UID's entry in node log.
+        Update this UID's timestamp and status in node log.
         """
         self.node_log_lock.acquire_lock()
         curr_status = self.node_log[self.node_log["uid"] == uid]["status"].iloc[0]
@@ -616,19 +641,17 @@ class P2PNode:
         self.node_log_lock.release_lock()
         return
     
-    def append_to_leader_log(self, msg):
+    def append_to_leader_log(self, msg, transaction_type):
         """
         Append transaction to leader log. If we already have this UID in the log,
         don't add it.
         """
-        # FIXME: add log lock
-
         log_entry = dict(
             uid = msg["uid"],
             timestamp = datetime.now(),
             clock = msg["clock"],
             sender = msg["sender"],
-            type = msg["type"],
+            type = transaction_type,
             item = msg["item"],
             quantity = msg["quantity"],
             status = ActionProcessStatus.RECIEVED.name,
