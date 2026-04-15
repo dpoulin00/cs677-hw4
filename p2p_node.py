@@ -1,4 +1,5 @@
 import copy
+import json
 import pickle
 import random
 import socket
@@ -228,6 +229,9 @@ class P2PNode:
                     # When we come back after resigning, start a new election.
                     # FIXME: make time between winning election and resigning random
                     # by choosing a random time delta at time of winning.
+                    # FIXME: make a separate thread to review the leader log to allow for concurrency
+                    # My concern with doing so is the leader changing mid execution of the process
+                    # although I suppose that's what the ACK system is in place to handle
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
@@ -470,10 +474,45 @@ class P2PNode:
         Check if we've caught up to the clock in any transactions still in the log.
         If so, we can process those transactions.
         """
-        # log = self.leader_log.copy()
-        # log = log[log["status"] != ActionStatus.DONE.name]
-        # for i, row in log.iterrows():
+        log = self.leader_log.copy()
+        log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
+        self.clock_lock.acquire()
+        for i, row in log.iterrows():
+            # hack-y fix to get around datatype problems when reading from CSV, should probably be done differently
+            if type(row["clock"]) is str:
+                row["clock"] = {int(key): int(val) for key, val in [item.split(': ') for item in row["clock"][1:-1].split(', ')]}
+
+            valid_clock_diff = self.verify_clock_valid(row["clock"], row["sender"])
+            if valid_clock_diff is True:
+                # process request
+                # FIXME: add request processing code here
+
+                # FIXME: remove temporary update of status here and implement it in request logic
+                self.leader_log_lock.acquire_lock()
+                self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
+                self.leader_log_lock.release_lock()
+                # update clock
+                self.update_vector_clock_received_message(row["clock"], row["sender"])
+                # set like this to only process one request per iteration of loop, although this may not
+                # be necessary and can probably be removed
+                break
+
+        self.clock_lock.release()
         return
+
+    def verify_clock_valid(self, clock: dict, sender: int):
+        try:
+            return_bool = True
+            for key in clock.keys():
+                node_clock_val = self.clock[key]
+                other_node_clock = clock[key]
+                if key == sender:
+                    return_bool = return_bool and other_node_clock == node_clock_val + 1
+                else:
+                    return_bool = return_bool and other_node_clock <= node_clock_val
+            return return_bool
+        except:
+            test = 2
 
     def resign(self, sleep:bool):
         """
@@ -723,7 +762,7 @@ class P2PNode:
         Performs the update to the local clock, to be called when a message updating the clock is received.
         Note: this function is only to be called when
         """
-        self.clock[sender_id] = max(self.clock[sender_id], received_clock[sender_id])
+        self.clock[sender_id] = self.clock[sender_id] + 1
 
 
 
