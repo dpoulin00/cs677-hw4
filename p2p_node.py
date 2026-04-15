@@ -321,7 +321,9 @@ class P2PNode:
         Called anytime we need to resend a message.
         The row containing the message information is present.
         """
+
         if row["type"] == BuyMsgType.INIT.name:
+            self.node_log_lock.acquire_lock()
             msg = dict(
                 uid = row["uid"],
                 sender = self.id,
@@ -330,6 +332,8 @@ class P2PNode:
                 item = row["item"],
                 quantity = row["quantity"],
             )
+            self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
+            self.node_log_lock.release()
             self.send_msg(msg, self.leader)
     
     def send_ack(self, uid, dest):
@@ -444,7 +448,9 @@ class P2PNode:
                 # FIXME: implement resending
                 # Currently updated to retry initializing a buy request, will need to be updated for each request
                 # type as they show up
+                # also need to change message status in log and update timestamp
                 self.resend_msg(row)
+                test = 2
             elif status == ActionStatus.STARTED.name:
                 # Check if action has gone unacked for too long.
                 # If so, set leader to False and break out of
@@ -464,6 +470,9 @@ class P2PNode:
         Check if we've caught up to the clock in any transactions still in the log.
         If so, we can process those transactions.
         """
+        # log = self.leader_log.copy()
+        # log = log[log["status"] != ActionStatus.DONE.name]
+        # for i, row in log.iterrows():
         return
 
     def resign(self, sleep:bool):
