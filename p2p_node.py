@@ -474,7 +474,7 @@ class P2PNode:
         Check if we've caught up to the clock in any transactions still in the log.
         If so, we can process those transactions.
         """
-        log = self.leader_log.copy()
+        log = copy.deepcopy(self.leader_log)
         log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
         self.clock_lock.acquire()
         for i, row in log.iterrows():
@@ -496,6 +496,7 @@ class P2PNode:
                 # set like this to only process one request per iteration of loop, although this may not
                 # be necessary and can probably be removed
                 break
+            pass
 
         self.clock_lock.release()
         return
