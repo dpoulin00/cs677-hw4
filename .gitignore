@@ -1,0 +1,4 @@
+/.venv
+/.idea
+leader_log.csv
+__pycache__/p2p_node.cpython-312.pyc

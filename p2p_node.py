@@ -1,3 +1,4 @@
+import copy
 import pickle
 import random
 import socket
@@ -12,6 +13,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 import pandas as pd
+from pandas.core.interchange.dataframe_protocol import DataFrame
 
 
 class Role(Enum):
@@ -95,7 +97,10 @@ class P2PNode:
         self.num_sent_msgs = 0
         self.num_accepted_msgs = 0
         self.nodes = nodes
-        self.clock = {id:0 for id in nodes.keys()}
+        node_keys = list(nodes.keys())
+        node_keys.append(self.id)
+        node_keys.sort()
+        self.clock = {id:0 for id in node_keys}
         self.is_buyer = is_buyer
         self.is_seller = is_seller
         self.is_leader = False
@@ -125,6 +130,7 @@ class P2PNode:
         self.is_leader_lock = None  # Used when sending acks to make sure acked transaction gets into log
         self.node_log_lock = None
         self.leader_log_lock = None
+        self.clock_lock = None # Used to update the clock when a new request is made
         
     
     def start(self):
@@ -143,6 +149,7 @@ class P2PNode:
         self.is_leader_lock = threading.Lock()
         self.node_log_lock = threading.Lock()
         self.leader_log_lock = threading.Lock()
+        self.clock_lock = threading.Lock()
         # Start run loop
         self.running = True
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
@@ -308,6 +315,22 @@ class P2PNode:
             serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
             node_socket.sendall(serialized_msg)
         return
+
+    def resend_msg(self, row: DataFrame):
+        """
+        Called anytime we need to resend a message.
+        The row containing the message information is present.
+        """
+        if row["type"] == BuyMsgType.INIT.name:
+            msg = dict(
+                uid = row["uid"],
+                sender = self.id,
+                clock = row["clock"],
+                type = BuyMsgType.INIT.name,
+                item = row["item"],
+                quantity = row["quantity"],
+            )
+            self.send_msg(msg, self.leader)
     
     def send_ack(self, uid, dest):
         """
@@ -360,10 +383,12 @@ class P2PNode:
             quantity = item_quantity_dict[item]
 
         # Add to log
-        # FIXME: add clock lock? May not be needed.
-        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=self.clock,
-                                type=ActionType.BUY.name, item=item, quantity=quantity,
+        self.clock_lock.acquire()
+        self.update_vector_clock_local_event()
+        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=copy.deepcopy(self.clock),
+                                type=BuyMsgType.INIT.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
+
         print(f"{datetime.now()}, buy, node {self.id} is buying {item}")
         # Send out request
         msg = dict(
@@ -374,6 +399,7 @@ class P2PNode:
             item = item,
             quantity = quantity
         )
+        self.clock_lock.release()
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
         self.next_buy_ts = datetime.now() + timedelta(0, 10)
@@ -416,7 +442,9 @@ class P2PNode:
             timestamp = row["timestamp"]
             if status == ActionStatus.NEEDS_RESEND.name:
                 # FIXME: implement resending
-                pass
+                # Currently updated to retry initializing a buy request, will need to be updated for each request
+                # type as they show up
+                self.resend_msg(row)
             elif status == ActionStatus.STARTED.name:
                 # Check if action has gone unacked for too long.
                 # If so, set leader to False and break out of
@@ -561,7 +589,7 @@ class P2PNode:
         self.node_log.loc[election_mask & started_mask, "status"] = ActionStatus.DONE.name
         self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
         # Wait a few seconds, then pick up the log. This gives old leader time to save it.
-        time.sleep(10)
+        time.sleep(20)
         if not already_leader:
             self.leader_log_lock.acquire_lock()
             self.leader_log = self.leader_log.drop(self.leader_log.index)
@@ -614,6 +642,7 @@ class P2PNode:
         Add entry to node_log.
         """
         # FIXME: add log lock
+        self.node_log_lock.acquire_lock()
         log_entry = dict(
             uid = uid,
             timestamp = timestamp,
@@ -623,7 +652,6 @@ class P2PNode:
             quantity = quantity,
             status = status
         )
-        self.node_log_lock.acquire_lock()
         self.node_log.loc[len(self.node_log)] = log_entry
         self.node_log_lock.release_lock()
         return
@@ -674,4 +702,21 @@ class P2PNode:
             self.leader_log.loc[self.leader_log["uid"] == uid, "timestamp"] = timestamp
         self.leader_log_lock.release_lock()
         return
+
+    def update_vector_clock_local_event(self):
+        """
+        Performs the update to the local clock, to be called when a local event occurs.
+        """
+        self.clock[self.id] += 1
+
+    def update_vector_clock_received_message(self, received_clock: dict, sender_id: int):
+        """
+        Performs the update to the local clock, to be called when a message updating the clock is received.
+        Note: this function is only to be called when
+        """
+        self.clock[sender_id] = max(self.clock[sender_id], received_clock[sender_id])
+
+
+
+
 
