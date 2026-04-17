@@ -102,6 +102,7 @@ class P2PNode:
         node_keys.append(self.id)
         node_keys.sort()
         self.clock = {id:0 for id in node_keys}
+        self.leader_clock = {id:0 for id in node_keys}
         self.is_buyer = is_buyer
         self.is_seller = is_seller
         self.is_leader = False
@@ -124,6 +125,7 @@ class P2PNode:
         self.next_resign_ts = None
         self.last_election_ts = None
         self.leader_log_path = Path(r"leader_log.csv")
+        self.leader_clock_path = Path(r"leader_clock")
         # Optional attributes used for testing
         self.shopping_list = shopping_list
         self.selling_list = selling_list
@@ -132,6 +134,7 @@ class P2PNode:
         self.node_log_lock = None
         self.leader_log_lock = None
         self.clock_lock = None # Used to update the clock when a new request is made
+        self.leader_clock_lock = None # Used when the current node is elected as leader.
         
     
     def start(self):
@@ -141,6 +144,7 @@ class P2PNode:
         Since we only have one loop, no need to spawn a thread for run loop.
         """
         # Set up server socket
+
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.settimeout(100)  # Time out so we can gracefully exit once we stop seeing messages.
@@ -151,8 +155,10 @@ class P2PNode:
         self.node_log_lock = threading.Lock()
         self.leader_log_lock = threading.Lock()
         self.clock_lock = threading.Lock()
+        self.leader_clock_lock = threading.Lock()
         # Start run loop
         self.running = True
+        # create file to store leader clock
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
         self.run_loop()
         return
@@ -280,6 +286,10 @@ class P2PNode:
                 if self.is_leader:
                     self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
+                else:
+                    self.clock_lock.acquire()
+                    self.update_vector_clock_received_message(msg["clock"], msg["sender"])
+                    self.clock_lock.release()
             case BuyMsgType.RESTOCK.name:
                 if self.is_leader:
                     self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
@@ -402,7 +412,7 @@ class P2PNode:
         msg = dict(
             uid = uid,
             sender = self.id,
-            clock = self.clock,
+            clock = copy.deepcopy(self.clock),
             type = BuyMsgType.INIT.name,
             item = item,
             quantity = quantity
@@ -476,13 +486,13 @@ class P2PNode:
         """
         log = copy.deepcopy(self.leader_log)
         log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
-        self.clock_lock.acquire()
+        self.leader_clock_lock.acquire_lock()
         for i, row in log.iterrows():
             # hack-y fix to get around datatype problems when reading from CSV, should probably be done differently
             if type(row["clock"]) is str:
                 row["clock"] = {int(key): int(val) for key, val in [item.split(': ') for item in row["clock"][1:-1].split(', ')]}
 
-            valid_clock_diff = self.verify_clock_valid(row["clock"], row["sender"])
+            valid_clock_diff = self.verify_leader_clock_valid(row["clock"], row["sender"])
             if valid_clock_diff is True:
                 # process request
                 # FIXME: add request processing code here
@@ -492,28 +502,27 @@ class P2PNode:
                 self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
                 self.leader_log_lock.release_lock()
                 # update clock
-                self.update_vector_clock_received_message(row["clock"], row["sender"])
+                self.update_vector_clock_received_message_leader(row["clock"], row["sender"])
                 # set like this to only process one request per iteration of loop, although this may not
                 # be necessary and can probably be removed
                 break
-            pass
 
-        self.clock_lock.release()
+        self.leader_clock_lock.release_lock()
         return
 
-    def verify_clock_valid(self, clock: dict, sender: int):
-        try:
-            return_bool = True
-            for key in clock.keys():
-                node_clock_val = self.clock[key]
-                other_node_clock = clock[key]
-                if key == sender:
-                    return_bool = return_bool and other_node_clock == node_clock_val + 1
-                else:
-                    return_bool = return_bool and other_node_clock <= node_clock_val
-            return return_bool
-        except:
-            test = 2
+    def verify_leader_clock_valid(self, clock: dict, sender: int):
+        """
+        Used to check if the current processing event is allowed next by the vector clock orderings
+        """
+        return_bool = True
+        for key in clock.keys():
+            node_clock_val = self.leader_clock[key]
+            other_node_clock = clock[key]
+            if key == sender:
+                return_bool = return_bool and other_node_clock == node_clock_val + 1
+            else:
+                return_bool = return_bool and other_node_clock <= node_clock_val
+        return return_bool
 
     def resign(self, sleep:bool):
         """
@@ -530,8 +539,12 @@ class P2PNode:
         self.is_leader_lock.acquire_lock()
         self.is_leader = False
         self.leader_log_lock.acquire_lock()
+        self.leader_clock_lock.acquire_lock()
         self.leader_log.to_csv(self.leader_log_path, index=False)
+        with open(self.leader_clock_path, "wb") as file:
+            pickle.dump(self.leader_clock, file)
         self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log
+        self.leader_clock_lock.release_lock()
         self.leader_log_lock.release_lock()
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
@@ -641,10 +654,16 @@ class P2PNode:
         time.sleep(20)
         if not already_leader:
             self.leader_log_lock.acquire_lock()
+            self.leader_clock_lock.acquire_lock()
             self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
                 self.leader_log = pd.read_csv(self.leader_log_path)
+            if self.leader_clock_path.exists():
+                with open(self.leader_clock_path, "rb") as file:
+                    self.leader_clock = pickle.load(file)
+                    print(f"{str(self.leader_clock)}")
             #print(self.leader_log)
+            self.leader_clock_lock.release_lock()
             self.leader_log_lock.release_lock()
         self.node_log_lock.release_lock()
         return
@@ -763,7 +782,13 @@ class P2PNode:
         Performs the update to the local clock, to be called when a message updating the clock is received.
         Note: this function is only to be called when
         """
-        self.clock[sender_id] = self.clock[sender_id] + 1
+        self.clock[sender_id] = max(received_clock[sender_id], self.clock[sender_id])
+
+    def update_vector_clock_received_message_leader(self, received_clock: dict, sender_id: int):
+        """
+        Performs the update to the local leader clock when appropriate.
+        """
+        self.leader_clock[sender_id] = max(received_clock[sender_id], self.leader_clock[sender_id])
 
 
 
