@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import pickle
 import random
 import socket
@@ -109,7 +110,8 @@ class P2PNode:
         self.leader = None
         self.running = False  # Set to true and false by parent process
         # Attributes used by sellers
-        self.next_restock_ts = datetime.now() + timedelta(0,random.randint(12,15))  # days, seconds
+        # Note, to have sellers first send stock to market on opening the market, set restock timestamp to now.
+        self.next_restock_ts = datetime.now() # + timedelta(0,random.randint(12,15))  # days, seconds
         self.revenue = 0
         self.prices = {
             "SALT": 1,
@@ -240,7 +242,7 @@ class P2PNode:
                     # although I suppose that's what the ACK system is in place to handle
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
-                    next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
+                    next_resign_ts = last_election_ts + timedelta(0, 20)  # days, seconds
                     if datetime.now() > next_resign_ts:
                         self.resign(sleep=True)
                         self.elect()
@@ -283,17 +285,21 @@ class P2PNode:
         # Parse message type and call the corresponding function
         match msg["type"]:
             case BuyMsgType.INIT.name:
+                self.clock_lock.acquire_lock()
+                self.update_vector_clock_received_message(msg["clock"], msg["sender"])
+                self.clock_lock.release_lock()
                 if self.is_leader:
                     self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
-                else:
-                    self.clock_lock.acquire()
-                    self.update_vector_clock_received_message(msg["clock"], msg["sender"])
-                    self.clock_lock.release()
+
             case BuyMsgType.RESTOCK.name:
+                self.clock_lock.acquire_lock()
+                self.update_vector_clock_received_message(msg["clock"], msg["sender"])
+                self.clock_lock.release_lock()
                 if self.is_leader:
-                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
+                    self.append_to_leader_log(msg, transaction_type=ActionType.RESTOCK)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
+
             case BuyMsgType.PAYMENT.name:
                 pass
             case BuyMsgType.RESPONSE.name:
@@ -434,6 +440,35 @@ class P2PNode:
         """
         Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
         """
+        # uid = uuid.uuid4()
+        # if len(self.selling_list) == 0:
+        #     item = random.choice(list(Item)).name
+        #     quantity = 20
+        # else:
+        #     item_quantity_dict = self.selling_list.pop()
+        #     item = list(item_quantity_dict.keys())[0]
+        #     quantity = item_quantity_dict[item]
+        #
+        # self.clock_lock.acquire()
+        # self.update_vector_clock_local_event()
+        # clock_lock_copy = copy.deepcopy(self.clock)
+        # self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
+        #                         type=BuyMsgType.RESTOCK.name, item=item, quantity=quantity,
+        #                         status=ActionStatus.STARTED.name)
+        # print(f"{datetime.now()}, restock, node {self.id} is restocking {item}")
+        # # Send out request
+        # msg = dict(
+        #     uid = uid,
+        #     sender = self.id,
+        #     clock = clock_lock_copy,
+        #     type = BuyMsgType.RESTOCK.name,
+        #     item = item,
+        #     quantity = quantity
+        # )
+        # self.clock_lock.release()
+        # for nid in self.nodes.keys():
+        #     self.send_msg(msg=msg, dest=nid)
+        # self.next_restock_ts = datetime.now() + timedelta(0, 60)
         return
     
     def get_paid(self, price:int):
@@ -488,6 +523,7 @@ class P2PNode:
         log = copy.deepcopy(self.leader_log)
         log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
         self.leader_clock_lock.acquire_lock()
+        true_count = 0
         for i, row in log.iterrows():
             # hack-y fix to get around datatype problems when reading from CSV, should probably be done differently
             if type(row["clock"]) is str:
@@ -506,10 +542,13 @@ class P2PNode:
                 self.update_vector_clock_received_message_leader(row["clock"], row["sender"])
                 # set like this to only process one request per iteration of loop, although this may not
                 # be necessary and can probably be removed
+                true_count += 1
                 break
+
 
         self.leader_clock_lock.release_lock()
         return
+
 
     def verify_leader_clock_valid(self, clock: dict, sender: int):
         """
