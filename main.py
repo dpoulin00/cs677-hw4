@@ -66,8 +66,11 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int):
 if __name__ == "__main__":
     start_port = 49152
     log_path = Path("leader_log.csv")
+    clock_path = Path("leader_clock")
     if log_path.exists():
         log_path.unlink()
+    if clock_path.exists():
+        clock_path.unlink()
     network = make_random_network(num_nodes=5, start_port=start_port)
     run_network(network=network, run_time=10000)
     pass

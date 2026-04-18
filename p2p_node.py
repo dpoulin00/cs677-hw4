@@ -403,7 +403,8 @@ class P2PNode:
         # Add to log
         self.clock_lock.acquire()
         self.update_vector_clock_local_event()
-        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=copy.deepcopy(self.clock),
+        clock_lock_copy = copy.deepcopy(self.clock)
+        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
                                 type=BuyMsgType.INIT.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
 
@@ -412,7 +413,7 @@ class P2PNode:
         msg = dict(
             uid = uid,
             sender = self.id,
-            clock = copy.deepcopy(self.clock),
+            clock = clock_lock_copy,
             type = BuyMsgType.INIT.name,
             item = item,
             quantity = quantity
@@ -651,7 +652,7 @@ class P2PNode:
         self.node_log.loc[election_mask & started_mask, "status"] = ActionStatus.DONE.name
         self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
         # Wait a few seconds, then pick up the log. This gives old leader time to save it.
-        time.sleep(20)
+        time.sleep(15)
         if not already_leader:
             self.leader_log_lock.acquire_lock()
             self.leader_clock_lock.acquire_lock()
