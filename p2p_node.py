@@ -137,6 +137,7 @@ class P2PNode:
         self.leader_log_lock = None
         self.clock_lock = None # Used to update the clock when a new request is made
         self.leader_clock_lock = None # Used when the current node is elected as leader.
+        self.start_election_lock = None
         
     
     def start(self):
@@ -158,6 +159,7 @@ class P2PNode:
         self.leader_log_lock = threading.Lock()
         self.clock_lock = threading.Lock()
         self.leader_clock_lock = threading.Lock()
+        self.start_election_lock = threading.Lock()
         # Start run loop
         self.running = True
         # create file to store leader clock
@@ -289,7 +291,7 @@ class P2PNode:
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
                 self.clock_lock.release_lock()
                 if self.is_leader:
-                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
+                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
 
             case BuyMsgType.RESTOCK.name:
@@ -491,6 +493,10 @@ class P2PNode:
         # leader is down.
         log = self.node_log.copy()
         log = log[log["status"] != ActionStatus.DONE.name]
+        # Update log with DONE actions removed
+        self.node_log_lock.acquire_lock()
+        self.node_load = log.copy()
+        self.node_log_lock.release_lock()
         for i, row in log.iterrows():
             uid = row["uid"]
             status = row["status"]
@@ -522,7 +528,13 @@ class P2PNode:
         If so, we can process those transactions.
         """
         log = copy.deepcopy(self.leader_log)
-        log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
+        log = log[log["status"] != ActionStatus.DONE.name]
+        # update leader log with DONE actions removes
+        self.leader_log_lock.acquire_lock()
+        self.leader_log = log.copy()
+        self.leader_log_lock.release_lock()
+
+        log = log[log["status"] != ActionStatus.NEEDS_RESEND.name]
         self.leader_clock_lock.acquire_lock()
         true_count = 0
         for i, row in log.iterrows():
@@ -610,6 +622,7 @@ class P2PNode:
         Note that we won't start a new election if we already have one open.
         Note also that we track elections in the node_log.
         """
+        self.start_election_lock.acquire_lock()  # Avoid starting multiple elections at once
         # If we haven't started an election, do so now
         if self.get_most_recent_election(status=ActionStatus.STARTED.name) is not None:
             pass
@@ -637,6 +650,7 @@ class P2PNode:
                 for nid in self.nodes.keys():
                     if nid > self.id:
                         self.send_msg(msg=msg, dest=nid)
+        self.start_election_lock.release_lock()
         return
     
     def okay(self, incoming_msg):
@@ -706,6 +720,8 @@ class P2PNode:
             self.leader_clock_lock.release_lock()
             self.leader_log_lock.release_lock()
         self.node_log_lock.release_lock()
+        # for debugging only
+        # print(self.leader_log[["uid", "type", "status"]])
         return
     
     def youwon(self, new_leader):
