@@ -786,10 +786,11 @@ class P2PNode:
         Update this UID's timestamp and status in node log.
         """
         self.node_log_lock.acquire_lock()
-        curr_status = self.node_log[self.node_log["uid"] == uid]["status"].iloc[0]
-        if curr_status != ActionStatus.DONE.name:
-            self.node_log.loc[self.node_log["uid"] == uid, "status"] = status
-            self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
+        if uid in self.node_log["uid"].to_list():
+            curr_status = self.node_log[self.node_log["uid"] == uid]["status"].iloc[0]
+            if curr_status != ActionStatus.DONE.name:
+                self.node_log.loc[self.node_log["uid"] == uid, "status"] = status
+                self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
         self.node_log_lock.release_lock()
         return
     
@@ -820,10 +821,11 @@ class P2PNode:
         Update this UID's entry in node log.
         """
         self.leader_log_lock.acquire_lock()
-        curr_status = self.leader_log[self.leader_log["uid"] == uid]["status"].iloc[0]
-        if curr_status != ActionStatus.DONE.name:
-            self.leader_log.loc[self.leader_log["uid"] == uid, "status"] = status
-            self.leader_log.loc[self.leader_log["uid"] == uid, "timestamp"] = timestamp
+        if uid in self.leader_log["uid"].to_list():
+            curr_status = self.leader_log[self.leader_log["uid"] == uid]["status"].iloc[0]
+            if curr_status != ActionStatus.DONE.name:
+                self.leader_log.loc[self.leader_log["uid"] == uid, "status"] = status
+                self.leader_log.loc[self.leader_log["uid"] == uid, "timestamp"] = timestamp
         self.leader_log_lock.release_lock()
         return
 
