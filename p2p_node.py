@@ -434,41 +434,42 @@ class P2PNode:
         """
         called when trader sends back message confirming the buy went through.
         """
+
         return
     
     def restock(self):
         """
         Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
         """
-        # uid = uuid.uuid4()
-        # if len(self.selling_list) == 0:
-        #     item = random.choice(list(Item)).name
-        #     quantity = 20
-        # else:
-        #     item_quantity_dict = self.selling_list.pop()
-        #     item = list(item_quantity_dict.keys())[0]
-        #     quantity = item_quantity_dict[item]
-        #
-        # self.clock_lock.acquire()
-        # self.update_vector_clock_local_event()
-        # clock_lock_copy = copy.deepcopy(self.clock)
-        # self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
-        #                         type=BuyMsgType.RESTOCK.name, item=item, quantity=quantity,
-        #                         status=ActionStatus.STARTED.name)
-        # print(f"{datetime.now()}, restock, node {self.id} is restocking {item}")
-        # # Send out request
-        # msg = dict(
-        #     uid = uid,
-        #     sender = self.id,
-        #     clock = clock_lock_copy,
-        #     type = BuyMsgType.RESTOCK.name,
-        #     item = item,
-        #     quantity = quantity
-        # )
-        # self.clock_lock.release()
-        # for nid in self.nodes.keys():
-        #     self.send_msg(msg=msg, dest=nid)
-        # self.next_restock_ts = datetime.now() + timedelta(0, 60)
+        uid = uuid.uuid4()
+        if len(self.selling_list) == 0:
+            item = random.choice(list(Item)).name
+            quantity = 20
+        else:
+            item_quantity_dict = self.selling_list.pop()
+            item = list(item_quantity_dict.keys())[0]
+            quantity = item_quantity_dict[item]
+
+        self.clock_lock.acquire()
+        self.update_vector_clock_local_event()
+        clock_lock_copy = copy.deepcopy(self.clock)
+        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
+                                type=BuyMsgType.RESTOCK.name, item=item, quantity=quantity,
+                                status=ActionStatus.STARTED.name)
+        print(f"{datetime.now()}, restock, node {self.id} is restocking {item}")
+        # Send out request
+        msg = dict(
+            uid = uid,
+            sender = self.id,
+            clock = clock_lock_copy,
+            type = BuyMsgType.RESTOCK.name,
+            item = item,
+            quantity = quantity
+        )
+        self.clock_lock.release()
+        for nid in self.nodes.keys():
+            self.send_msg(msg=msg, dest=nid)
+        self.next_restock_ts = datetime.now() + timedelta(0, 60)
         return
     
     def get_paid(self, price:int):
@@ -544,7 +545,6 @@ class P2PNode:
                 # be necessary and can probably be removed
                 true_count += 1
                 break
-
 
         self.leader_clock_lock.release_lock()
         return
