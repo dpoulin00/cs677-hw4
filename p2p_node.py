@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import pickle
 import random
 import socket
@@ -35,6 +36,7 @@ class BuyMsgType(Enum):
     RESPONSE = 1  # Leader responds to buyer (unicast)
     PAYMENT = 2  # Leader pays seller (unicast)
     RESTOCK = 3  # Seller sends to leader to stock new inventory (unicast, increment clock)
+    FINISH_TRANSACTION = 4 # Sent to buyer to signal the end of the transaction
 
 class ElecMsgType(Enum):
     """Defines election msg types."""
@@ -135,6 +137,7 @@ class P2PNode:
         self.leader_log_lock = None
         self.clock_lock = None # Used to update the clock when a new request is made
         self.leader_clock_lock = None # Used when the current node is elected as leader.
+        self.revenue_lock = None # Used when incrementing revenue on making a sale
         
     
     def start(self):
@@ -156,6 +159,7 @@ class P2PNode:
         self.leader_log_lock = threading.Lock()
         self.clock_lock = threading.Lock()
         self.leader_clock_lock = threading.Lock()
+        self.revenue_lock = threading.Lock()
         # Start run loop
         self.running = True
         # create file to store leader clock
@@ -235,9 +239,6 @@ class P2PNode:
                     # When we come back after resigning, start a new election.
                     # FIXME: make time between winning election and resigning random
                     # by choosing a random time delta at time of winning.
-                    # FIXME: make a separate thread to review the leader log to allow for concurrency
-                    # My concern with doing so is the leader changing mid execution of the process
-                    # although I suppose that's what the ACK system is in place to handle
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
@@ -283,21 +284,36 @@ class P2PNode:
         # Parse message type and call the corresponding function
         match msg["type"]:
             case BuyMsgType.INIT.name:
+                self.clock_lock.acquire()
+                self.update_vector_clock_received_message(msg["clock"], msg["sender"])
+                self.clock_lock.release()
                 if self.is_leader:
-                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
+                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
-                else:
-                    self.clock_lock.acquire()
-                    self.update_vector_clock_received_message(msg["clock"], msg["sender"])
-                    self.clock_lock.release()
             case BuyMsgType.RESTOCK.name:
+                self.clock_lock.acquire()
+                self.update_vector_clock_received_message(msg["clock"], msg["sender"])
+                self.clock_lock.release()
                 if self.is_leader:
-                    self.append_to_leader_log(msg, transaction_type=ActionType.BUY)
+                    self.append_to_leader_log(msg, transaction_type=ActionType.RESTOCK.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
             case BuyMsgType.PAYMENT.name:
-                pass
-            case BuyMsgType.RESPONSE.name:
-                pass
+                self.node_log_lock.acquire()
+                self.node_log.loc[self.node_log["uid"] == msg["uid"], "quantity"] -= msg["quantity"]
+                self.node_log.loc[self.node_log["uid"] == msg["uid"], "status"] = msg["status"]
+                self.revenue_lock.acquire()
+                self.revenue += msg["quantity"] * self.prices[msg["item"]]
+                print(f"{datetime.now()}, {msg["uid"]}, payment of {msg["quantity"] * self.prices[msg["item"]]} to {self.id} made for selling {msg["quantity"]} of {msg['item']}")
+                self.revenue_lock.release()
+                self.node_log_lock.release()
+            case BuyMsgType.FINISH_TRANSACTION.name:
+                self.node_log_lock.acquire()
+                self.node_log.loc[self.node_log["uid"] == msg["uid"], "status"] = ActionStatus.DONE.name
+                if msg["quantity"] > 0:
+                    print(f"{datetime.now()}, {msg["uid"]}, Node {self.id} purchased {msg['quantity']} {msg["item"]}.")
+                else:
+                    print(f"{datetime.now()}, {msg["uid"]}, Node {self.id} failed to purchase {msg["item"]}, there were none in stock when attempting to purchase.")
+                self.node_log_lock.release()
             case ControlMsgType.ACK.name:
                 self.recieve_ack(msg)
             case ElecMsgType.RESIGN.name:  # TODO: REMOVE. THIS CASE NO LONGER USED
@@ -423,19 +439,125 @@ class P2PNode:
             self.send_msg(msg=msg, dest=nid)
         self.next_buy_ts = datetime.now() + timedelta(0, 10)
         return
-    
-    def finalize_buy(self):
+
+    def finalize_buy(self, row):
         """
         called when trader sends back message confirming the buy went through.
         """
+
+        requested_quantity = row["quantity"]
+        requested_quantity_copy = row["quantity"]
+        # in the case that there are no valid items to buy, peer is informed
+        while requested_quantity >= 0:
+            # valid postings to buy from are from senders who are not the leader who still have items in stock
+            valid_rows = self.leader_log[self.leader_log["type"] == ActionType.RESTOCK.name]
+            valid_rows = valid_rows[valid_rows["sender"] != self.id]
+            valid_items = valid_rows[valid_rows["item"] == row["item"]]
+            if valid_items.empty or requested_quantity == 0:
+                self.leader_log.loc[self.leader_log["uid"] == row["uid"],
+                "status"] = ActionStatus.DONE.name
+                msg = dict(
+                    uid = row["uid"],
+                    sender = self.id,
+                    clock = row["clock"],
+                    type = BuyMsgType.FINISH_TRANSACTION.name,
+                    item = row["item"],
+                    quantity = requested_quantity_copy - requested_quantity,
+                    status = ActionStatus.DONE.name
+                )
+                self.send_msg(msg, row["sender"])
+                return
+            # otherwise, find appropriate seller
+            else:
+                min_timestamp = math.inf
+                sender = None
+
+                # send message back with peer having min timestamp
+                for i, item in valid_items.iterrows():
+                    cur_clock = item["clock"]
+                    if type(cur_clock) is str:
+                        cur_clock = {int(key): int(val) for key, val in
+                                        [item.split(': ') for item in cur_clock[1:-1].split(', ')]}
+                    cur_sender = item["sender"]
+                    cur_timestamp = cur_clock[cur_sender]
+                    if cur_timestamp < min_timestamp:
+                        min_timestamp = cur_timestamp
+                        sender = item
+
+                # If sender has total amount of requested quantity, buy all from this seller. Otherwise,
+                # split across sellers
+
+                cur_seller_quantity = sender["quantity"]
+                msg = None
+                if cur_seller_quantity >= requested_quantity:
+                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "quantity"] = cur_seller_quantity - requested_quantity
+                    msg = dict(
+                        uid=sender["uid"],
+                        sender=self.id,
+                        clock=sender["clock"],
+                        type=BuyMsgType.PAYMENT.name,
+                        item=sender["item"],
+                        quantity=requested_quantity_copy - (requested_quantity_copy - requested_quantity),
+                        status=ActionStatus.DONE.name
+                    )
+                    if cur_seller_quantity == requested_quantity:
+                        self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
+                else:
+                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "quantity"] = 0
+                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
+                    msg = dict(
+                        uid=sender["uid"],
+                        sender=self.id,
+                        clock=sender["clock"],
+                        type=BuyMsgType.PAYMENT.name,
+                        item=sender["item"],
+                        quantity=cur_seller_quantity,
+                        status=ActionStatus.ACKED.name
+                    )
+                requested_quantity -= min(cur_seller_quantity, requested_quantity)
+
+                self.send_msg(msg, sender["sender"])
         return
     
     def restock(self):
         """
         Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
         """
+        """
+               Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
+               """
+        uid = uuid.uuid4()
+        if len(self.selling_list) == 0:
+            item = random.choice(list(Item)).name
+            quantity = 20
+        else:
+            item_quantity_dict = self.selling_list.pop()
+            item = list(item_quantity_dict.keys())[0]
+            quantity = item_quantity_dict[item]
+
+        self.clock_lock.acquire()
+        self.update_vector_clock_local_event()
+        clock_lock_copy = copy.deepcopy(self.clock)
+        self.clock_lock.release()
+        self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
+                                type=BuyMsgType.RESTOCK.name, item=item, quantity=quantity,
+                                status=ActionStatus.STARTED.name)
+        print(f"{datetime.now()}, restock, node {self.id} is restocking {item}")
+        # Send out request
+        msg = dict(
+            uid=uid,
+            sender=self.id,
+            clock=clock_lock_copy,
+            type=BuyMsgType.RESTOCK.name,
+            item=item,
+            quantity=quantity
+        )
+        for nid in self.nodes.keys():
+            self.send_msg(msg=msg, dest=nid)
+        self.next_restock_ts = datetime.now() + timedelta(0, 60)
         return
-    
+
+
     def get_paid(self, price:int):
         """
         After trader finalizes sale, process payment from trader.
@@ -485,7 +607,9 @@ class P2PNode:
         Check if we've caught up to the clock in any transactions still in the log.
         If so, we can process those transactions.
         """
+        self.leader_log_lock.acquire()
         log = copy.deepcopy(self.leader_log)
+
         log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
         self.leader_clock_lock.acquire_lock()
         for i, row in log.iterrows():
@@ -493,22 +617,20 @@ class P2PNode:
             if type(row["clock"]) is str:
                 row["clock"] = {int(key): int(val) for key, val in [item.split(': ') for item in row["clock"][1:-1].split(', ')]}
 
+
             valid_clock_diff = self.verify_leader_clock_valid(row["clock"], row["sender"])
             if valid_clock_diff is True:
                 # process request
-                # FIXME: add request processing code here
+                if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
+                    if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
+                        self.finalize_buy(row)
 
-                # FIXME: remove temporary update of status here and implement it in request logic
-                self.leader_log_lock.acquire_lock()
-                self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
-                self.leader_log_lock.release_lock()
                 # update clock
                 self.update_vector_clock_received_message_leader(row["clock"], row["sender"])
                 # set like this to only process one request per iteration of loop, although this may not
                 # be necessary and can probably be removed
-                break
-
         self.leader_clock_lock.release_lock()
+        self.leader_log_lock.release()
         return
 
     def verify_leader_clock_valid(self, clock: dict, sender: int):
