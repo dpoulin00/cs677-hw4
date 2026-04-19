@@ -176,6 +176,17 @@ class P2PNode:
         print(f"{datetime.now()}, status, node {self.id} stopping")
         self.running = False
         self.server_socket.close()
+        # Save all data for debugging
+        with self.node_log_lock:
+            self.node_log.to_csv(f"logs/node_{self.id}_log.csv")
+        with self.leader_log_lock:
+            self.leader_log.to_csv(f"logs/node_{self.id}_leader_log.csv")
+        with self.leader_clock_lock:
+            with open(f"logs/node_{self.id}_leader_clock.txt", "wb") as file:
+                pickle.dump(self.leader_clock, file)
+        with self.clock_lock:
+            with open(f"logs/node_{self.id}_clock.txt", "wb") as file:
+                pickle.dump(self.clock, file)
         return
     
     def run_loop(self):
@@ -288,15 +299,23 @@ class P2PNode:
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
                 self.clock_lock.release()
                 if self.is_leader:
+                    self.leader_log_lock.acquire()
+                    self.is_leader_lock.acquire_lock()
                     self.append_to_leader_log(msg, transaction_type=ActionType.BUY.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
+                    self.is_leader_lock.release_lock()
+                    self.leader_log_lock.release()
             case BuyMsgType.RESTOCK.name:
                 self.clock_lock.acquire()
+                self.is_leader_lock.acquire_lock()
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
+                self.is_leader_lock.release_lock()
                 self.clock_lock.release()
                 if self.is_leader:
+                    self.leader_log_lock.acquire()
                     self.append_to_leader_log(msg, transaction_type=ActionType.RESTOCK.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
+                    self.leader_log_lock.release()
             case BuyMsgType.PAYMENT.name:
                 self.node_log_lock.acquire()
                 self.node_log.loc[self.node_log["uid"] == msg["uid"], "quantity"] -= msg["quantity"]
@@ -398,11 +417,9 @@ class P2PNode:
         # note sure, don't send an ACK.
         # The node will need to resend it; leaders will thus need to 
         # be able to figure out if they're getting a request they already have.
-        self.is_leader_lock.acquire_lock()
         if self.is_leader:
             self.send_msg(msg=msg, dest=dest)
             print(f"{datetime.now()}, {uid}, node {self.id} sent ack")
-        self.is_leader_lock.release_lock()
         return
     
     def recieve_ack(self, msg):
@@ -690,7 +707,13 @@ class P2PNode:
             while wait_time < wait_interval:
                 while select.select([self.server_socket], [], [], 0.1)[0]:
                     socket_connection, addr = self.server_socket.accept()
-                    socket_connection.recv(4096)
+                    data = socket_connection.recv(4096)
+                    msg = pickle.loads(data)
+                    if msg["type"] == ControlMsgType.STOP.name:
+                        self.stop()
+                        stopped = True
+                        wait_time = wait_interval + 1
+                        break
                 time.sleep(1)
                 wait_time += 1
             print(f"{datetime.now()}, node, node {self.id} is back online")
@@ -889,10 +912,8 @@ class P2PNode:
             status = ActionProcessStatus.RECIEVED.name,
 
         )
-        self.leader_log_lock.acquire_lock()
         if msg["uid"] not in self.leader_log["uid"].to_list():
             self.leader_log.loc[len(self.leader_log)] = log_entry
-        self.leader_log_lock.release_lock()
         return
     
     def update_leader_log(self, uid, timestamp, status: str):
