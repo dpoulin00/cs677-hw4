@@ -72,7 +72,7 @@ if __name__ == "__main__":
     if clock_path.exists():
         clock_path.unlink()
     network = make_random_network(num_nodes=5, start_port=start_port)
-    run_network(network=network, run_time=2000)
+    run_network(network=network, run_time=500)
     pass
 
 

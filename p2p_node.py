@@ -14,6 +14,7 @@ from datetime import timedelta
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+import numpy as np
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
 
@@ -359,10 +360,14 @@ class P2PNode:
         self.num_sent_msgs += 1
         #print(self.num_sent_msgs)
         port = self.nodes[dest]
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
-            node_socket.connect((socket.gethostname(), port))
-            serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
-            node_socket.sendall(serialized_msg)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
+                node_socket.connect((socket.gethostname(), port))
+                serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
+                node_socket.sendall(serialized_msg)
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            raise Exception
         return
 
     def resend_msg(self, row: DataFrame):
@@ -384,6 +389,7 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
             self.node_log_lock.release()
             self.send_msg(msg, self.leader)
+            print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
         elif row["type"] == BuyMsgType.RESTOCK.name:
             self.node_log_lock.acquire_lock()
             msg = dict(
@@ -397,6 +403,7 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
             self.node_log_lock.release()
             self.send_msg(msg, self.leader)
+            print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
     
     def send_ack(self, uid, dest):
         """
@@ -467,10 +474,61 @@ class P2PNode:
         self.clock_lock.release()
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
-        self.next_buy_ts = datetime.now() + timedelta(0, 10)
+        self.next_buy_ts = datetime.now() + timedelta(0, random.choice(range(1, 10)))
+        return
+    
+    def finalize_buy(self, row):
+        with self.leader_log_lock:  # acquire lock so we sell each item only once
+            # Pull out postings we could buy from
+            requested_quantity = row["quantity"]
+            postings = self.leader_log.copy()
+            postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
+                                & (postings["item"] == row["item"])
+                                & (postings["sender"] != self.id) ]
+            print(postings)
+            # Figure out which postings we'll buy items from
+            postings["cumsum"] = postings["quantity"].cumsum()
+            postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,
+                                             postings["cumsum"] - requested_quantity,
+                                             0)
+            used_postings = postings[postings["left over"] < postings["quantity"]]
+            # Figure out how much we'll buy from each posting, and then update the log
+            used_postings["amount bought"] = used_postings["quantity"] - used_postings["left over"]
+            used_uids = used_postings["uid"].to_list()
+            self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
+                                                self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
+                                                self.leader_log["quantity"])
+            self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & self.leader_log["quantity"] == 0,
+                                                 ActionStatus.DONE.name,
+                                                 self.leader_log["status"])
+        # Send message to buyer telling them how much we bought.
+        bought_quantity = int(used_postings["amount bought"].sum())
+        msg = dict(
+            uid = row["uid"],
+            sender = self.id,
+            clock = row["clock"],
+            type = BuyMsgType.FINISH_TRANSACTION.name,
+            item = row["item"],
+            quantity = bought_quantity,
+            status = ActionStatus.DONE.name
+        )
+        self.send_msg(msg, row["sender"])
+        # Finally, pay buyers as needed
+        for i, post in used_postings.iterrows():
+            msg = dict(
+                uid = post["uid"],
+                sender = self.id,
+                clock = post["clock"],
+                type = BuyMsgType.PAYMENT.name,
+                item = post["item"],
+                quantity = post["amount bought"],
+                status = ActionStatus.DONE.name
+            )
+            self.send_msg(msg, post["sender"])
+        
         return
 
-    def finalize_buy(self, row):
+    def finalize_buy_old(self, row):
         """
         called when trader sends back message confirming the buy went through.
         """
@@ -584,7 +642,7 @@ class P2PNode:
         )
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
-        self.next_restock_ts = datetime.now() + timedelta(0, 60)
+        self.next_restock_ts = datetime.now() + timedelta(0, 10)
         return
 
 
@@ -637,8 +695,8 @@ class P2PNode:
         Check if we've caught up to the clock in any transactions still in the log.
         If so, we can process those transactions.
         """
-        self.leader_log_lock.acquire()
-        log = copy.deepcopy(self.leader_log)
+        with self.leader_log_lock:
+            log = copy.deepcopy(self.leader_log)
 
         log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
         self.leader_clock_lock.acquire_lock()
@@ -660,7 +718,7 @@ class P2PNode:
                 # set like this to only process one request per iteration of loop, although this may not
                 # be necessary and can probably be removed
         self.leader_clock_lock.release_lock()
-        self.leader_log_lock.release()
+
         return
 
     def verify_leader_clock_valid(self, clock: dict, sender: int):
@@ -693,9 +751,10 @@ class P2PNode:
         self.is_leader = False
         self.leader_log_lock.acquire_lock()
         self.leader_clock_lock.acquire_lock()
-        self.leader_log.to_csv(self.leader_log_path, index=False)
+        self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
             pickle.dump(self.leader_clock, file)
+            print(f"{str(self.leader_clock)}")
         self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log
         self.leader_clock_lock.release_lock()
         self.leader_log_lock.release_lock()
@@ -810,13 +869,15 @@ class P2PNode:
         self.node_log.loc[election_mask & started_mask, "status"] = ActionStatus.DONE.name
         self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
         # Wait a few seconds, then pick up the log. This gives old leader time to save it.
-        time.sleep(15)
+        time.sleep(10)
         if not already_leader:
             self.leader_log_lock.acquire_lock()
             self.leader_clock_lock.acquire_lock()
             self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
                 self.leader_log = pd.read_csv(self.leader_log_path)
+                if self.leader_log.shape[0] == 0:
+                    raise Exception
             if self.leader_clock_path.exists():
                 with open(self.leader_clock_path, "rb") as file:
                     self.leader_clock = pickle.load(file)
@@ -939,13 +1000,17 @@ class P2PNode:
         Performs the update to the local clock, to be called when a message updating the clock is received.
         Note: this function is only to be called when
         """
-        self.clock[sender_id] = max(received_clock[sender_id], self.clock[sender_id])
+        for i in self.clock.keys():
+            self.clock[i] = max(received_clock[i], self.clock[i])
+        #self.clock[sender_id] = max(received_clock[sender_id], self.clock[sender_id])
 
     def update_vector_clock_received_message_leader(self, received_clock: dict, sender_id: int):
         """
         Performs the update to the local leader clock when appropriate.
         """
-        self.leader_clock[sender_id] = max(received_clock[sender_id], self.leader_clock[sender_id])
+        for i in self.leader_clock.keys():
+            self.leader_clock[i] = max(received_clock[i], self.leader_clock[i])
+        # self.leader_clock[sender_id] = max(received_clock[sender_id], self.leader_clock[sender_id])
 
 
 
