@@ -365,6 +365,19 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
             self.node_log_lock.release()
             self.send_msg(msg, self.leader)
+        elif row["type"] == BuyMsgType.RESTOCK.name:
+            self.node_log_lock.acquire_lock()
+            msg = dict(
+                uid = row["uid"],
+                sender = self.id,
+                clock = row["clock"],
+                type = BuyMsgType.RESTOCK.name,
+                item = row["item"],
+                quantity = row["quantity"],
+            )
+            self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
+            self.node_log_lock.release()
+            self.send_msg(msg, self.leader)
     
     def send_ack(self, uid, dest):
         """
