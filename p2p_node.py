@@ -498,7 +498,7 @@ class P2PNode:
             self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
                                                 self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
                                                 self.leader_log["quantity"])
-            self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & self.leader_log["quantity"] == 0,
+            self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & (self.leader_log["quantity"] == 0),
                                                  ActionStatus.DONE.name,
                                                  self.leader_log["status"])
         # Send message to buyer telling them how much we bought.
