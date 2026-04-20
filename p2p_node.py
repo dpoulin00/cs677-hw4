@@ -17,6 +17,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
+import debugpy
+
+# Make sure threads fail loudly
+def custom_hook(args):
+    print(f"Thread failed: {args.exc_type.__name__}: {args.exc_value}")
+threading.excepthook = custom_hook
 
 
 class Role(Enum):
@@ -147,8 +153,8 @@ class P2PNode:
         Sets self.running to True, sets up socket, and starts run loop
         Since we only have one loop, no need to spawn a thread for run loop.
         """
+        debugpy.debug_this_thread()
         # Set up server socket
-
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.settimeout(100)  # Time out so we can gracefully exit once we stop seeing messages.
@@ -165,7 +171,10 @@ class P2PNode:
         self.running = True
         # create file to store leader clock
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
-        self.run_loop()
+        try:
+            self.run_loop()
+        except Exception as e:
+            pass
         return
     
     def stop(self):
@@ -253,7 +262,10 @@ class P2PNode:
                     # by choosing a random time delta at time of winning.
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
-                    next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
+                    if last_election_ts is not None:
+                        next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
+                    else:  # This shouldn't happen, but in we get here before log is saved, we won't resign yet
+                        next_resign_ts = datetime.now() + timedelta(0, 10)
                     if datetime.now() > next_resign_ts:
                         self.resign(sleep=True)
                         self.elect()
@@ -299,13 +311,13 @@ class P2PNode:
                 self.clock_lock.acquire()
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
                 self.clock_lock.release()
+                self.leader_log_lock.acquire()
+                self.is_leader_lock.acquire_lock()
                 if self.is_leader:
-                    self.leader_log_lock.acquire()
-                    self.is_leader_lock.acquire_lock()
                     self.append_to_leader_log(msg, transaction_type=ActionType.BUY.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
-                    self.is_leader_lock.release_lock()
-                    self.leader_log_lock.release()
+                self.is_leader_lock.release_lock()
+                self.leader_log_lock.release()
             case BuyMsgType.RESTOCK.name:
                 self.clock_lock.acquire()
                 self.is_leader_lock.acquire_lock()
@@ -348,6 +360,10 @@ class P2PNode:
                 self.im_okay(uid=msg["uid"])
             case ElecMsgType.IWON.name:
                 self.youwon(new_leader = msg["sender"])
+                try:
+                    self.node_log.to_csv(f"logs/node_{self.id}_log.csv")
+                except Exception as e:
+                    pass
             case ControlMsgType.STOP.name:
                 self.stop()
         return
@@ -357,6 +373,16 @@ class P2PNode:
         Called anytime we need to send a msg.
         Send message to node whose ID is dest.
         """
+        # To debug
+        if "clock" in list(msg.keys()):
+            msg_clock_time = int(msg["clock"][self.id])
+            prev_clock_times = [d[self.id] for d in self.node_log["clock"].to_list() if self.id in d.keys()]
+            try:
+                if (msg_clock_time - 1 > 0) and (msg_clock_time - 1 not in prev_clock_times):
+                    raise Exception
+            except:
+                pass
+
         self.num_sent_msgs += 1
         #print(self.num_sent_msgs)
         port = self.nodes[dest]
@@ -365,6 +391,7 @@ class P2PNode:
                 node_socket.connect((socket.gethostname(), port))
                 serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
                 node_socket.sendall(serialized_msg)
+                node_socket.close()
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             raise Exception
@@ -443,6 +470,7 @@ class P2PNode:
         """
         Initiate buy request by selecting random item and messaging leader.
         """
+        self.clock_lock.acquire() # Acquire lock for whole fct to avoid double increments
         # Initialize buy request
         uid = uuid.uuid4()
         if len(self.shopping_list) == 0:
@@ -454,9 +482,9 @@ class P2PNode:
             quantity = item_quantity_dict[item]
 
         # Add to log
-        self.clock_lock.acquire()
         self.update_vector_clock_local_event()
         clock_lock_copy = copy.deepcopy(self.clock)
+
         self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
                                 type=BuyMsgType.INIT.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
@@ -471,10 +499,10 @@ class P2PNode:
             item = item,
             quantity = quantity
         )
-        self.clock_lock.release()
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
         self.next_buy_ts = datetime.now() + timedelta(0, random.choice(range(1, 10)))
+        self.clock_lock.release()
         return
     
     def finalize_buy(self, row):
@@ -495,12 +523,15 @@ class P2PNode:
             # Figure out how much we'll buy from each posting, and then update the log
             used_postings["amount bought"] = used_postings["quantity"] - used_postings["left over"]
             used_uids = used_postings["uid"].to_list()
-            self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
-                                                self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
-                                                self.leader_log["quantity"])
-            self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & (self.leader_log["quantity"] == 0),
-                                                 ActionStatus.DONE.name,
-                                                 self.leader_log["status"])
+            try:
+                self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
+                                                    self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
+                                                    self.leader_log["quantity"])
+                self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & (self.leader_log["quantity"] == 0),
+                                                     ActionStatus.DONE.name,
+                                                     self.leader_log["status"])
+            except Exception as e:
+                pass
         # Send message to buyer telling them how much we bought.
         bought_quantity = int(used_postings["amount bought"].sum())
         msg = dict(
@@ -611,9 +642,7 @@ class P2PNode:
         """
         Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
         """
-        """
-               Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
-               """
+        self.clock_lock.acquire()
         uid = uuid.uuid4()
         if len(self.selling_list) == 0:
             item = random.choice(list(Item)).name
@@ -623,10 +652,8 @@ class P2PNode:
             item = list(item_quantity_dict.keys())[0]
             quantity = item_quantity_dict[item]
 
-        self.clock_lock.acquire()
         self.update_vector_clock_local_event()
         clock_lock_copy = copy.deepcopy(self.clock)
-        self.clock_lock.release()
         self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
                                 type=BuyMsgType.RESTOCK.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
@@ -643,6 +670,7 @@ class P2PNode:
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
         self.next_restock_ts = datetime.now() + timedelta(0, 10)
+        self.clock_lock.release()
         return
 
 
@@ -868,6 +896,7 @@ class P2PNode:
         started_mask = (self.node_log["status"] == ActionStatus.STARTED.name)
         self.node_log.loc[election_mask & started_mask, "status"] = ActionStatus.DONE.name
         self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
+        self.node_log_lock.release_lock()
         # Wait a few seconds, then pick up the log. This gives old leader time to save it.
         time.sleep(10)
         if not already_leader:
@@ -876,6 +905,10 @@ class P2PNode:
             self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
                 self.leader_log = pd.read_csv(self.leader_log_path)
+                clock_df = pd.DataFrame(self.leader_log["clock"].str.strip("{}").str.split(", ").to_list())
+                for c in clock_df.columns: clock_df[c] = clock_df[c].str.slice(3)
+                clock_df = clock_df.astype(int)
+                self.leader_log["clock"] = pd.Series(clock_df.T.to_dict())
                 if self.leader_log.shape[0] == 0:
                     raise Exception
             if self.leader_clock_path.exists():
@@ -885,7 +918,6 @@ class P2PNode:
             #print(self.leader_log)
             self.leader_clock_lock.release_lock()
             self.leader_log_lock.release_lock()
-        self.node_log_lock.release_lock()
         return
     
     def youwon(self, new_leader):
@@ -940,7 +972,11 @@ class P2PNode:
             quantity = quantity,
             status = status
         )
-        self.node_log.loc[len(self.node_log)] = log_entry
+        try:
+            if uid not in self.node_log["uid"].to_list():
+                self.node_log.loc[len(self.node_log)] = log_entry
+        except Exception as e:
+            pass
         self.node_log_lock.release_lock()
         return
 

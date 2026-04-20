@@ -71,8 +71,9 @@ if __name__ == "__main__":
         log_path.unlink()
     if clock_path.exists():
         clock_path.unlink()
+    time.sleep(1)  # time for logs to be deleted
     network = make_random_network(num_nodes=5, start_port=start_port)
-    run_network(network=network, run_time=500)
+    run_network(network=network, run_time=10000)
     pass
 
 
