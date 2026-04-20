@@ -789,7 +789,7 @@ class P2PNode:
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
         if sleep:
-            wait_interval = random.choice(range(35, 65))
+            wait_interval = random.choice(range(10, 20))
             wait_time = 0
             while wait_time < wait_interval:
                 while select.select([self.server_socket], [], [], 0.1)[0]:
