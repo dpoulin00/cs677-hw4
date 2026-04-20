@@ -167,7 +167,8 @@ class P2PNode:
         self.clock_lock = threading.Lock()
         self.leader_clock_lock = threading.Lock()
         self.revenue_lock = threading.Lock()
-        # Start run loop
+        # Start run loop (after waiting 1 second so all nodes are online)
+        time.sleep(1)
         self.running = True
         # create file to store leader clock
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
@@ -740,6 +741,7 @@ class P2PNode:
                 if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
                     if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
                         self.finalize_buy(row)
+                        self.update_leader_log(uid=row["uid"], timestamp=datetime.now(), status=ActionStatus.DONE.name)
 
                 # update clock
                 self.update_vector_clock_received_message_leader(row["clock"], row["sender"])
