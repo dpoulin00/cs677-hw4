@@ -284,7 +284,7 @@ class P2PNode:
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     if last_election_ts is not None:
-                        next_resign_ts = last_election_ts + timedelta(0, 120)  # days, seconds
+                        next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
                     else:  # This shouldn't happen, but in we get here before log is saved, we won't resign yet
                         next_resign_ts = datetime.now() + timedelta(0, 10)
                     if datetime.now() > next_resign_ts:
@@ -760,7 +760,7 @@ class P2PNode:
         with self.leader_log_lock:
             log = copy.deepcopy(self.leader_log)
 
-        log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
+        log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name) & log["sender"]]
         self.leader_clock_lock.acquire_lock()
         for i, row in log.iterrows():
             # hack-y fix to get around datatype problems when reading from CSV, should probably be done differently
@@ -823,7 +823,7 @@ class P2PNode:
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
         if sleep:
-            wait_interval = random.choice(range(40, 50))
+            wait_interval = random.choice(range(20, 30))
             wait_time = 0
             while wait_time < wait_interval:
                 while select.select([self.server_socket], [], [], 0.1)[0]:
