@@ -29,8 +29,8 @@ def make_performance_test_network(num_nodes: int, start_port:int, max_requests:i
         node_view_of_network = node_ports.copy()
         del node_view_of_network[id]
         # Three possible roles, BUYER, SELLER, and BUYER_AND_SELLER
-        is_buyer = (True if role in [p2p.Role.BUYER.name, p2p.Role.BUYER_AND_SELLER.name] and id != 1 else False)
-        is_seller = (True if role in [p2p.Role.SELLER.name, p2p.Role.BUYER_AND_SELLER.name] or id == 1 else False)
+        is_buyer = (True if role in [p2p.Role.BUYER.name, p2p.Role.BUYER_AND_SELLER.name] or id in nodes_to_limit else False)
+        is_seller = (True if role in [p2p.Role.SELLER.name, p2p.Role.BUYER_AND_SELLER.name] and id not in nodes_to_limit else False)
         max_requests = max_requests if id in nodes_to_limit else -1
         network[curr_port_number] = p2p.P2PNode(id=id,
                                                 port_number=curr_port_number,
