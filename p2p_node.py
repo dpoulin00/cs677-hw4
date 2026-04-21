@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
-import debugpy
+# import debugpy
 
 # Make sure threads fail loudly
 def custom_hook(args):
@@ -92,7 +92,8 @@ class P2PNode:
     def __init__(self, id: int, port_number: int, is_buyer: bool, is_seller: bool,
                  nodes: Dict[int, int],  # keys are IDs, vals are ports
                  shopping_list: list[Dict] | list=[],
-                 selling_list: list[Dict] | list=[]):
+                 selling_list: list[Dict] | list=[],
+                 max_requests:int = -1):
         """
         Initializes node by recording whether eacah is a buyer or a seller,
         and a list of neighbors (all nodes in network). Also sets up
@@ -130,14 +131,19 @@ class P2PNode:
         # Attributes use by leaders and for elections
         self.resigned = False  # Set to true temporarily when we resign
         self.leader_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "sender", "type", "item", "quantity", "status"])
+        self.request_timestamps = pd.DataFrame(columns=["uid", "type", "item", "init_time", "time_to_ack", "time_to_first_response"])
         self.elections = dict()  # keys are UIDs, values are timestamps
         self.next_resign_ts = None
         self.last_election_ts = None
         self.leader_log_path = Path(r"leader_log.csv")
         self.leader_clock_path = Path(r"leader_clock")
+        self.timestamp_record_path = Path(f"node_{self.id}_timestamps.csv")
         # Optional attributes used for testing
         self.shopping_list = shopping_list
         self.selling_list = selling_list
+        self.processing_shopping_list = len(self.shopping_list) > 0
+        # used to limit number of buying and selling requests
+        self.max_requests = max_requests
         # Locks
         self.is_leader_lock = None  # Used when sending acks to make sure acked transaction gets into log
         self.node_log_lock = None
@@ -145,6 +151,7 @@ class P2PNode:
         self.clock_lock = None # Used to update the clock when a new request is made
         self.leader_clock_lock = None # Used when the current node is elected as leader.
         self.revenue_lock = None # Used when incrementing revenue on making a sale
+        self.request_timestamps_lock = None # Used for performance testing to lock the timestamp log
         
     
     def start(self):
@@ -153,7 +160,7 @@ class P2PNode:
         Sets self.running to True, sets up socket, and starts run loop
         Since we only have one loop, no need to spawn a thread for run loop.
         """
-        debugpy.debug_this_thread()
+        # debugpy.debug_this_thread()
         # Set up server socket
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -167,6 +174,7 @@ class P2PNode:
         self.clock_lock = threading.Lock()
         self.leader_clock_lock = threading.Lock()
         self.revenue_lock = threading.Lock()
+        self.request_timestamps_lock = threading.Lock()
         # Start run loop (after waiting 1 second so all nodes are online)
         time.sleep(1)
         self.running = True
@@ -339,6 +347,7 @@ class P2PNode:
                 print(f"{datetime.now()}, {msg["uid"]}, payment of {msg["quantity"] * self.prices[msg["item"]]} to {self.id} made for selling {msg["quantity"]} of {msg['item']}")
                 self.revenue_lock.release()
                 self.node_log_lock.release()
+                self.update_request_timestamps(msg["uid"], False)
             case BuyMsgType.FINISH_TRANSACTION.name:
                 self.node_log_lock.acquire()
                 self.node_log.loc[self.node_log["uid"] == msg["uid"], "status"] = ActionStatus.DONE.name
@@ -347,8 +356,10 @@ class P2PNode:
                 else:
                     print(f"{datetime.now()}, {msg["uid"]}, Node {self.id} failed to purchase {msg["item"]}, there were none in stock when attempting to purchase.")
                 self.node_log_lock.release()
+                self.update_request_timestamps(msg["uid"], False)
             case ControlMsgType.ACK.name:
                 self.recieve_ack(msg)
+                self.update_request_timestamps(msg["uid"], True)
             case ElecMsgType.RESIGN.name:  # TODO: REMOVE. THIS CASE NO LONGER USED
                 if self.leader == msg["sender"]:
                     self.leader = None
@@ -500,9 +511,14 @@ class P2PNode:
             item = item,
             quantity = quantity
         )
+
+
+        self.append_to_timestamp_log(uid=uid, type=ActionType.BUY.name, item=item)
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
         self.next_buy_ts = datetime.now() + timedelta(0, random.choice(range(1, 10)))
+        # record time request started
+
         self.clock_lock.release()
         return
     
@@ -668,9 +684,14 @@ class P2PNode:
             item=item,
             quantity=quantity
         )
+        self.request_timestamps_lock.acquire()
+        self.append_to_timestamp_log(uid=uid, type=ActionType.RESTOCK.name, item=item)
+        self.request_timestamps_lock.release()
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
+
         self.next_restock_ts = datetime.now() + timedelta(0, 10)
+
         self.clock_lock.release()
         return
 
@@ -994,6 +1015,23 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
         self.node_log_lock.release_lock()
         return
+
+    def update_request_timestamps(self, uid, is_ack:bool):
+        """
+        For performance testing, records the timestamp when it received the message
+        """
+        if (self.request_timestamps["uid"] == uid).any():
+            if is_ack:
+                check_if_acked = self.request_timestamps[self.request_timestamps["uid"] == uid]["time_to_ack"].iloc[0]
+                if check_if_acked is None:
+                    beginning_timestamp = self.request_timestamps[self.request_timestamps["uid"] == uid]["init_time"].iloc[0]
+                    self.request_timestamps.loc[self.request_timestamps["uid"] == uid, "time_to_ack"] = time.time() - beginning_timestamp
+            else:
+                test = self.request_timestamps[self.request_timestamps["uid"] == uid]
+                check_if_response = self.request_timestamps[self.request_timestamps["uid"] == uid]["time_to_first_response"].iloc[0]
+                if check_if_response is None:
+                    beginning_timestamp = self.request_timestamps[self.request_timestamps["uid"] == uid]["init_time"].iloc[0]
+                    self.request_timestamps.loc[self.request_timestamps["uid"] == uid, "time_to_first_response"] = time.time() - beginning_timestamp
     
     def append_to_leader_log(self, msg, transaction_type):
         """
@@ -1014,6 +1052,18 @@ class P2PNode:
         if msg["uid"] not in self.leader_log["uid"].to_list():
             self.leader_log.loc[len(self.leader_log)] = log_entry
         return
+
+    def append_to_timestamp_log(self, uid, type:str, item:str):
+        log_entry = dict(
+            uid = uid,
+            type = type,
+            item = item,
+            init_time = time.time(),
+            time_to_ack = None,
+            time_to_first_response = None
+        )
+        if uid not in self.request_timestamps["uid"].to_list():
+            self.request_timestamps.loc[len(self.request_timestamps)] = log_entry
     
     def update_leader_log(self, uid, timestamp, status: str):
         """
