@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
-import debugpy
+# import debugpy
 
 # Make sure threads fail loudly
 def custom_hook(args):
@@ -161,7 +161,7 @@ class P2PNode:
         Sets self.running to True, sets up socket, and starts run loop
         Since we only have one loop, no need to spawn a thread for run loop.
         """
-        debugpy.debug_this_thread()
+        # debugpy.debug_this_thread()
         # Set up server socket
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -284,7 +284,7 @@ class P2PNode:
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     if last_election_ts is not None:
-                        next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
+                        next_resign_ts = last_election_ts + timedelta(0, 120)  # days, seconds
                     else:  # This shouldn't happen, but in we get here before log is saved, we won't resign yet
                         next_resign_ts = datetime.now() + timedelta(0, 10)
                     if datetime.now() > next_resign_ts:
@@ -817,14 +817,13 @@ class P2PNode:
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
             pickle.dump(self.leader_clock, file)
-            print(f"{str(self.leader_clock)}")
         self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log
         self.leader_clock_lock.release_lock()
         self.leader_log_lock.release_lock()
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
         if sleep:
-            wait_interval = random.choice(range(10, 20))
+            wait_interval = random.choice(range(40, 50))
             wait_time = 0
             while wait_time < wait_interval:
                 while select.select([self.server_socket], [], [], 0.1)[0]:
