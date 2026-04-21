@@ -2,4 +2,7 @@
 /.idea
 leader_log.csv
 leader_clock
+node_0_request_timestamps_saved.csv
+/logs/*
 __pycache__/p2p_node.cpython-312.pyc
+__pycache__/

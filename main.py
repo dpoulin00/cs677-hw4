@@ -38,26 +38,27 @@ def dict_to_network(node_dict: dict) -> dict[int, p2p.P2PNode]:
     return dict()
 
 
-def run_network(network: dict[int, p2p.P2PNode], run_time:int):
+def run_network(network: dict[int, p2p.P2PNode], run_time:int, stop_network:bool=False):
     process_list = []
     for nid in network.keys():
         node = network[nid]
         p = Process(target=node.start,)
         process_list.append(p)
         p.start()
-    time.sleep(run_time)
-    # Iterate through nodes and send each a STOP msg
-    for nid in network.keys():
-        node = network[nid]
-        port = node.port_number
-        msg = dict(type=p2p.ControlMsgType.STOP.name)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
-            node_socket.connect((socket.gethostname(), port))
-            serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
-            node_socket.sendall(serialized_msg)
-            # FIXME: low priority, but it a node is resigned at time of STOP, it might discard the stop.
-            # Could set up logic here to resend in such a case.
-    # Wait for each node process to end
+    if not stop_network:
+        time.sleep(run_time)
+        # Iterate through nodes and send each a STOP msg
+        for nid in network.keys():
+            node = network[nid]
+            port = node.port_number
+            msg = dict(type=p2p.ControlMsgType.STOP.name)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
+                node_socket.connect((socket.gethostname(), port))
+                serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
+                node_socket.sendall(serialized_msg)
+                # FIXME: low priority, but it a node is resigned at time of STOP, it might discard the stop.
+                # Could set up logic here to resend in such a case.
+        # Wait for each node process to end
     for p in process_list:
         p.join()
     return

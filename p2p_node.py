@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
-# import debugpy
+import debugpy
 
 # Make sure threads fail loudly
 def custom_hook(args):
@@ -144,6 +144,7 @@ class P2PNode:
         self.processing_shopping_list = len(self.shopping_list) > 0
         # used to limit number of buying and selling requests
         self.max_requests = max_requests
+        self.cur_requests = 0
         # Locks
         self.is_leader_lock = None  # Used when sending acks to make sure acked transaction gets into log
         self.node_log_lock = None
@@ -160,7 +161,7 @@ class P2PNode:
         Sets self.running to True, sets up socket, and starts run loop
         Since we only have one loop, no need to spawn a thread for run loop.
         """
-        # debugpy.debug_this_thread()
+        debugpy.debug_this_thread()
         # Set up server socket
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -252,12 +253,23 @@ class P2PNode:
                 elif not self.is_leader:
                     # We have a leader but we're not it. Buy and sell items.
                     # We only buy and sell after certain intervals.
-                    if self.is_seller:
-                        if datetime.now() > self.next_restock_ts:
-                            self.restock()
-                    if self.is_buyer:
-                        if datetime.now() > self.next_buy_ts:
-                            self.buy()
+                    if self.max_requests == -1 or self.cur_requests < self.max_requests:
+                        if self.is_seller:
+                            if datetime.now() > self.next_restock_ts:
+                                self.restock()
+                                self.cur_requests += 1
+                        if self.is_buyer:
+                            if datetime.now() > self.next_buy_ts:
+                                self.buy()
+                                self.cur_requests += 1
+                    else:
+                        if not (self.request_timestamps["time_to_first_response"]).isna().any():
+                            self.request_timestamps.to_csv(Path(f"node_{self.id}_request_timestamps.csv"))
+                            msg = dict(type=ControlMsgType.STOP.name)
+                            for nid in self.nodes.keys():
+                                self.send_msg(msg=msg, dest=nid)
+                            time.sleep(1)
+                            self.stop()
                     if True:
                         # Check if any entries have lingered too long (which we'll take to mean
                         # the leader went down), or if any need to be resent
