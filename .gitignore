@@ -6,3 +6,4 @@ __pycache__/p2p_node.cpython-312.pyc
 __pycache__/
 node_0_request_timestamps_saved.csv
 node_0_request_timestamps_new.csv
+logs/*
