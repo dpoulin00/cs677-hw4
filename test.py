@@ -227,7 +227,7 @@ def test_elections_work():
     We expect, as different nodes become leader, for transactions to continue.
     """
     network = main.make_random_network(num_nodes=10, start_port=49152)
-    main.run_network(network=network, run_time=1000)
+    main.run_network(network=network, run_time=10000)
     return
 
 def test_purchase_amounts_are_correct():

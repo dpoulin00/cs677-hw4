@@ -422,6 +422,7 @@ class P2PNode:
                 quantity = row["quantity"],
             )
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
+            self.node_log.loc[self.node_log["uid"] == row["uid"], "timestamp"] = datetime.now()
             #self.node_log_lock.release()
             self.send_msg(msg, self.leader)
             print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
@@ -436,6 +437,7 @@ class P2PNode:
                 quantity = row["quantity"],
             )
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
+            self.node_log.loc[self.node_log["uid"] == row["uid"], "timestamp"] = datetime.now()
             #self.node_log_lock.release()
             self.send_msg(msg, self.leader)
             print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
@@ -624,28 +626,32 @@ class P2PNode:
         # lingered too long. This will save the resending of msgs when the
         # leader is down.
         self.node_log_lock.acquire_lock()
-        log = self.node_log.copy()
-        log = log[log["status"] != ActionStatus.DONE.name]
-        for i, row in log.iterrows():
-            uid = row["uid"]
-            status = row["status"]
-            timestamp = row["timestamp"]
-            if status == ActionStatus.NEEDS_RESEND.name:
-                # FIXME: implement resending
-                # Currently updated to retry initializing a buy request, will need to be updated for each request
-                # type as they show up
-                # also need to change message status in log and update timestamp
-                self.resend_msg(row)
-                test = 2
-            elif status == ActionStatus.STARTED.name:
-                # Check if action has gone unacked for too long.
-                # If so, set leader to False and break out of
-                # loop. This will lead to an election
-                if timestamp + timedelta(0, 30) < datetime.now(): # FIXME: this is based on any transaction, really it should be based on when the last ACK came in
+        # Check how long since the last ACK. If it has been too long, we assume the leader has gone down.
+        try:
+            last_ack_ts = self.node_log[self.node_log["status"] == ActionStatus.ACKED.name]["timestamp"].max()
+            longest_started_ts = self.node_log[self.node_log["status"] == ActionStatus.STARTED.name]["timestamp"].min()
+            if not pd.isna(longest_started_ts):
+                if longest_started_ts + timedelta(0, 30) < datetime.now():
                     self.leader = None
                     self.node_log.loc[self.node_log["status"] == ActionStatus.STARTED.name,
-                                      "status"] = ActionStatus.NEEDS_RESEND.name
-                    break
+                                          "status"] = ActionStatus.NEEDS_RESEND.name
+        except Exception as e:
+            print(e)
+            raise Exception
+        # Assuming leader is still up, resend messages
+        if self.leader is not None:
+            log = self.node_log.copy()
+            log = log[log["status"] != ActionStatus.DONE.name]
+            log = log[log["status"] == ActionStatus.NEEDS_RESEND.name]
+            for i, row in log.iterrows():
+                uid = row["uid"]
+                status = row["status"]
+                timestamp = row["timestamp"]
+                if status == ActionStatus.NEEDS_RESEND.name:
+                    # Currently updated to retry initializing a buy request, will need to be updated for each request
+                    # type as they show up
+                    # also need to change message status in log and update timestamp
+                    self.resend_msg(row)
         self.node_log_lock.release_lock()
         return
     
@@ -754,6 +760,7 @@ class P2PNode:
         # If we haven't started an election, do so now
         if self.get_most_recent_election(status=ActionStatus.STARTED.name) is not None:
             pass
+        #elif self.get_most_recent_election(status=ActionStatus.DONE.name) is not None:
         else:
             print(f"{datetime.now()}, election, node {self.id} is starting election")
             # Add election to node log
@@ -882,6 +889,9 @@ class P2PNode:
         started_mask = (self.node_log["status"] == ActionStatus.STARTED.name)
         self.node_log.loc[election_mask & started_mask, "status"] = ActionStatus.DONE.name
         self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
+        # And we'll set all unACKed items as needing a resend
+        self.node_log.loc[self.node_log["status"] == ActionStatus.STARTED.name,
+                          "status"] = ActionStatus.NEEDS_RESEND.name
         self.node_log_lock.release_lock()
         return
 
