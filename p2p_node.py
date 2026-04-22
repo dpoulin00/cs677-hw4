@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
-import debugpy
+#import debugpy
 
 # Make sure threads fail loudly
 def custom_hook(args):
@@ -153,7 +153,7 @@ class P2PNode:
         Sets self.running to True, sets up socket, and starts run loop
         Since we only have one loop, no need to spawn a thread for run loop.
         """
-        debugpy.debug_this_thread()
+        #debugpy.debug_this_thread()
         # Set up server socket
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -514,7 +514,7 @@ class P2PNode:
             postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
                                 & (postings["item"] == row["item"])
                                 & (postings["sender"] != self.id) ]
-            print(postings)
+            # print(postings)
             # Figure out which postings we'll buy items from
             postings["cumsum"] = postings["quantity"].cumsum()
             postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,
