@@ -177,7 +177,7 @@ class P2PNode:
         self.revenue_lock = threading.Lock()
         self.request_timestamps_lock = threading.Lock()
         # Start run loop (after waiting 1 second so all nodes are online)
-        time.sleep(1)
+        time.sleep(3)
         self.running = True
         # create file to store leader clock
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
@@ -528,7 +528,7 @@ class P2PNode:
         self.append_to_timestamp_log(uid=uid, type=ActionType.BUY.name, item=item)
         for nid in self.nodes.keys():
             self.send_msg(msg=msg, dest=nid)
-        self.next_buy_ts = datetime.now() + timedelta(0, random.choice(range(1, 10)))
+        self.next_buy_ts = datetime.now() + timedelta(0, random.choice(range(5, 15)))
         # record time request started
 
         self.clock_lock.release()
@@ -586,85 +586,6 @@ class P2PNode:
             )
             self.send_msg(msg, post["sender"])
         
-        return
-
-    def finalize_buy_old(self, row):
-        """
-        called when trader sends back message confirming the buy went through.
-        """
-
-        requested_quantity = row["quantity"]
-        requested_quantity_copy = row["quantity"]
-        # in the case that there are no valid items to buy, peer is informed
-        while requested_quantity >= 0:
-            # valid postings to buy from are from senders who are not the leader who still have items in stock
-            valid_rows = self.leader_log[self.leader_log["type"] == ActionType.RESTOCK.name]
-            valid_rows = valid_rows[valid_rows["sender"] != self.id]
-            valid_items = valid_rows[valid_rows["item"] == row["item"]]
-            if valid_items.empty or requested_quantity == 0:
-                self.leader_log.loc[self.leader_log["uid"] == row["uid"],
-                "status"] = ActionStatus.DONE.name
-                msg = dict(
-                    uid = row["uid"],
-                    sender = self.id,
-                    clock = row["clock"],
-                    type = BuyMsgType.FINISH_TRANSACTION.name,
-                    item = row["item"],
-                    quantity = requested_quantity_copy - requested_quantity,
-                    status = ActionStatus.DONE.name
-                )
-                self.send_msg(msg, row["sender"])
-                return
-            # otherwise, find appropriate seller
-            else:
-                min_timestamp = math.inf
-                sender = None
-
-                # send message back with peer having min timestamp
-                for i, item in valid_items.iterrows():
-                    cur_clock = item["clock"]
-                    if type(cur_clock) is str:
-                        cur_clock = {int(key): int(val) for key, val in
-                                        [item.split(': ') for item in cur_clock[1:-1].split(', ')]}
-                    cur_sender = item["sender"]
-                    cur_timestamp = cur_clock[cur_sender]
-                    if cur_timestamp < min_timestamp:
-                        min_timestamp = cur_timestamp
-                        sender = item
-
-                # If sender has total amount of requested quantity, buy all from this seller. Otherwise,
-                # split across sellers
-
-                cur_seller_quantity = sender["quantity"]
-                msg = None
-                if cur_seller_quantity >= requested_quantity:
-                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "quantity"] = cur_seller_quantity - requested_quantity
-                    msg = dict(
-                        uid=sender["uid"],
-                        sender=self.id,
-                        clock=sender["clock"],
-                        type=BuyMsgType.PAYMENT.name,
-                        item=sender["item"],
-                        quantity=requested_quantity_copy - (requested_quantity_copy - requested_quantity),
-                        status=ActionStatus.DONE.name
-                    )
-                    if cur_seller_quantity == requested_quantity:
-                        self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
-                else:
-                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "quantity"] = 0
-                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
-                    msg = dict(
-                        uid=sender["uid"],
-                        sender=self.id,
-                        clock=sender["clock"],
-                        type=BuyMsgType.PAYMENT.name,
-                        item=sender["item"],
-                        quantity=cur_seller_quantity,
-                        status=ActionStatus.ACKED.name
-                    )
-                requested_quantity -= min(cur_seller_quantity, requested_quantity)
-
-                self.send_msg(msg, sender["sender"])
         return
     
     def restock(self):

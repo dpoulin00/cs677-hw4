@@ -25,6 +25,11 @@ def main():
         leader_dfs.append(c_df)
     node_df = pd.concat(node_dfs)
     leader_df = pd.concat(leader_dfs)
+    
+    clock = {}
+    with open(r"C:\Users\dpoul\OneDrive\Documents\git_repos\cs677\HW4\cs677-hw4\logs\node_4_leader_clock.txt", "rb") as txt:
+        clock = pickle.load(txt)
+    print(clock)
     return
 
 
