@@ -258,7 +258,7 @@ class P2PNode:
                         if datetime.now() > self.next_buy_ts:
                             self.buy()
                             self.cur_requests += 1
-                    if self.max_requests is not -1 and self.cur_requests > self.max_requests and (~self.node_log["acked_time"].isna()).sum() >= self.max_requests:
+                    if self.max_requests != -1 and self.cur_requests > self.max_requests and (~self.node_log["acked_time"].isna()).sum() >= self.max_requests:
                         self.node_log.to_csv(Path(f"node_{self.id}_request_timestamps.csv"))
                         msg = dict(type=ControlMsgType.STOP.name)
                         for nid in self.nodes.keys():
