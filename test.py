@@ -101,8 +101,8 @@ def test_no_salt_sellers():
             "selling list": [{p2p.Item.BOAR.name: 10}]*1000,},
         2: {"port": 49154,
             "role": p2p.Role.BUYER_AND_SELLER.name,
-            "shopping list": [{p2p.Item.FISH.name: 10}]*1000,
-            "selling list": [{p2p.Item.SALT.name: 10}]*1000,},
+            "shopping list": [{p2p.Item.SALT.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
         3: {"port": 49155,
             "role": p2p.Role.BUYER.name,
             "shopping list": [{p2p.Item.FISH.name: 10}]*1000,
@@ -113,12 +113,12 @@ def test_no_salt_sellers():
             "selling list": [{p2p.Item.BOAR.name: 10}]*1000,},
         5: {"port": 49157,
             "role": p2p.Role.SELLER.name,
-            "shopping list": [{p2p.Item.BOAR.name: 10}]*1000,
-            "selling list": [{p2p.Item.SALT.name: 10}]*1000,},
+            "shopping list": [{p2p.Item.SALT.name: 10}]*1000,
+            "selling list": [{p2p.Item.BOAR.name: 10}]*1000,},
         6: {"port": 49158,
             "role": p2p.Role.SELLER.name,
-            "shopping list": [{p2p.Item.BOAR.name: 10}]*1000,
-            "selling list": [{p2p.Item.SALT.name: 10}]*1000,},
+            "shopping list": [{p2p.Item.SALT.name: 10}]*1000,
+            "selling list": [{p2p.Item.BOAR.name: 10}]*1000,},
             
     }
     network = main.dict_to_network(node_dict=node_dict)
