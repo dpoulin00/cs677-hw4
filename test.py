@@ -230,6 +230,9 @@ def test_elections_work():
     main.run_network(network=network, run_time=1000)
     return
 
+def test_purchase_amounts_are_correct():
+    return
+
 def test_6_nodes():
     return
 
