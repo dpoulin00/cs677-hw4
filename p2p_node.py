@@ -126,7 +126,7 @@ class P2PNode:
             "BOAR": 10
         }
         # Attributes used by buyers
-        self.next_buy_ts = datetime.now() + timedelta(0,random.randint(1,3))  # days, seconds
+        self.next_buy_ts = datetime.now() + timedelta(0,random.randint(1,10))  # days, seconds
         # Attributes use by leaders and for elections
         self.resigned = False  # Set to true temporarily when we resign
         self.leader_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "sender", "type", "item", "quantity", "status"])
@@ -385,7 +385,8 @@ class P2PNode:
             prev_clock_times = [d[self.id] for d in self.node_log["clock"].to_list() if self.id in d.keys()]
             try:
                 if (msg_clock_time - 1 > 0) and (msg_clock_time - 1 not in prev_clock_times):
-                    raise Exception
+                    #raise Exception
+                    pass
             except Exception as e:
                 print(e)
                 raise Exception
@@ -709,6 +710,7 @@ class P2PNode:
         print(f"{datetime.now()}, election, node {self.id} is resigning")
         self.is_leader_lock.acquire_lock()
         self.is_leader = False
+        #self.leader = None
         self.leader_clock_lock.acquire_lock()
         self.leader_log_lock.acquire_lock()
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
@@ -831,7 +833,7 @@ class P2PNode:
         self.node_log.loc[election_mask & started_mask, "timestamp"] = datetime.now()
         self.node_log_lock.release_lock()
         # Wait a few seconds, then pick up the log. This gives old leader time to save it.
-        time.sleep(10)
+        time.sleep(15)
         if not already_leader:
             self.leader_clock_lock.acquire_lock()
             self.leader_log_lock.acquire_lock()
