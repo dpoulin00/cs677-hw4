@@ -61,10 +61,13 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int, stop_network:bool
     #log_path = Path("leader_log.csv")
     log_path = Path("leader_log.csv")
     clock_path = Path("leader_clock")
+    timestamp_path = Path("node_0_request_timestamps.csv")
     if log_path.exists():
         log_path.unlink()
     if clock_path.exists():
         clock_path.unlink()
+    if timestamp_path.exists():
+        timestamp_path.unlink()
     time.sleep(1)  # time for logs to be deleted
     process_list = []
     for nid in network.keys():
