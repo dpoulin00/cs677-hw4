@@ -392,7 +392,9 @@ class P2PNode:
         Called anytime we need to send a msg.
         Send message to node whose ID is dest.
         """
-        # To debug
+        # We used the below to debug messages not making it into the leader_log.
+        # It helped us identify when nodes sent messages whose clock differed from what
+        # was in their log.
         if "clock" in list(msg.keys()):
             msg_clock_time = int(msg["clock"][self.id])
             prev_clock_times = [d[self.id] for d in self.node_log["clock"].to_list() if self.id in d.keys()]
@@ -403,9 +405,10 @@ class P2PNode:
             except Exception as e:
                 print(e)
                 raise Exception
-
+        # Increment num msgs sent and send the message.
+        # The try statement is left over from when we
+        # we debugging msg sending errors.
         self.num_sent_msgs += 1
-        #print(self.num_sent_msgs)
         port = self.nodes[dest]
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
@@ -421,11 +424,14 @@ class P2PNode:
     def resend_msg(self, row: DataFrame):
         """
         Called anytime we need to resend a message.
-        The row containing the message information is present.
+        The log row containing the message information is used
+        to build the message.
         """
-
+        # If this is the beginning of a buy message,
+        # we send a buy message and update the log with the new status
+        # (started STARTED of NEEDS_RESEND), and update the corresponding
+        # timestamp in the log.
         if row["type"] == BuyMsgType.INIT.name:
-            #self.node_log_lock.acquire_lock()
             msg = dict(
                 uid = row["uid"],
                 sender = self.id,
@@ -436,11 +442,13 @@ class P2PNode:
             )
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
             self.node_log.loc[self.node_log["uid"] == row["uid"], "timestamp"] = datetime.now()
-            #self.node_log_lock.release()
             self.send_msg(msg, self.leader)
             print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
+        # If this is a restock message,
+        # we send a buy message and update the log with the new status
+        # (started STARTED of NEEDS_RESEND), and update the corresponding
+        # timestamp in the log.
         elif row["type"] == BuyMsgType.RESTOCK.name:
-            #self.node_log_lock.acquire_lock()
             msg = dict(
                 uid = row["uid"],
                 sender = self.id,
@@ -451,7 +459,6 @@ class P2PNode:
             )
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
             self.node_log.loc[self.node_log["uid"] == row["uid"], "timestamp"] = datetime.now()
-            #self.node_log_lock.release()
             self.send_msg(msg, self.leader)
             print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
     
@@ -466,14 +473,11 @@ class P2PNode:
             uid=uid,
             sender=self.id
         )
-        # After picking up lock, make a final check here.
-        # If we're still the leader, our adding this
-        # request to the log would be included in any saved logs, and thus it's
-        # safe to send the ack. If we're no longer the leader, we may or
-        # may not have gotten the request into the log in time. Since we're
-        # note sure, don't send an ACK.
-        # The node will need to resend it; leaders will thus need to 
-        # be able to figure out if they're getting a request they already have.
+        # Note: importantly, this function is only ever called when we
+        # have picked up the is_leader_lock. Otherwise, we could
+        # get past the if statement checking that we're the leader,
+        # then lose the leadership. We don't want non-leaders to
+        # send ACKs, as this can mess up the logging.
         if self.is_leader:
             self.send_msg(msg=msg, dest=dest)
             print(f"{datetime.now()}, {uid}, node {self.id} sent ack")
@@ -481,7 +485,8 @@ class P2PNode:
     
     def recieve_ack(self, msg):
         """
-        When leader sends an initial ACK back, mark transaction as ACKED in the log.
+        When leader sends an initial ACK back, the node marks that
+        transaction as ACKED in the node log.
         """
         uid = msg["uid"]
         print(f"{datetime.now()}, {uid}, node {self.id} received ack")
@@ -491,10 +496,12 @@ class P2PNode:
 
     def buy(self):
         """
-        Initiate buy request by selecting random item and messaging leader.
+        Initiate buy request by selecting random item + quantity and messaging leader.
+        Alternatively, if a shopping list was assigned to this (which we use
+        for testing cases), we get the item and quantity from the shopping list.
         """
         self.clock_lock.acquire() # Acquire lock for whole fct to avoid double increments
-        # Initialize buy request
+        # Either pick random item and quantity or get from shopping list
         uid = uuid.uuid4()
         if len(self.shopping_list) == 0:
             item = random.choice(list(Item)).name
@@ -504,7 +511,7 @@ class P2PNode:
             item = list(item_quantity_dict.keys())[0]
             quantity = item_quantity_dict[item]
 
-        # Add to log
+        # Update vector clock and add to node log
         self.update_vector_clock_local_event()
         clock_lock_copy = copy.deepcopy(self.clock)
 
@@ -522,15 +529,24 @@ class P2PNode:
             item = item,
             quantity = quantity
         )
-        for nid in self.nodes.keys():
+        for nid in self.nodes.keys():  # Multicast request so all nodes can update vector clocks
             self.send_msg(msg=msg, dest=nid)
         self.next_buy_ts = datetime.now() + timedelta(0, random.choice(range(1, 10)))
         self.clock_lock.release()
         return
     
     def finalize_buy(self, row):
+        """
+        When the leader's clock catches up to a BUY request, we call this function
+        to actually process that buy. This consists of checking the items available for
+        sale, sending a message telling the buyer how much they bough, and sending payment
+        to the seller(s).
+        """
         if row["sender"] == self.id:
-            pass  # the leader does not buy or sell
+            # the leader does not buy or sell, so we effectively discard
+            # the leader's purchases. Note that these were started
+            # before the node became leader.
+            pass
         else:
             with self.leader_log_lock:  # acquire lock so we sell each item only once
                 # Pull out postings we could buy from
@@ -539,7 +555,6 @@ class P2PNode:
                 postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
                                     & (postings["item"] == row["item"])
                                     & (postings["sender"] != self.id) ]
-                # print(postings)
                 # Figure out which postings we'll buy items from
                 postings["cumsum"] = postings["quantity"].cumsum()
                 postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,
@@ -549,6 +564,8 @@ class P2PNode:
                 # Figure out how much we'll buy from each posting, and then update the log
                 used_postings["amount bought"] = used_postings["quantity"] - used_postings["left over"]
                 used_uids = used_postings["uid"].to_list()
+                # We wrapped these lines in a try statement when implementing them,
+                # such that we could debug the pandas and numpy operations.
                 try:
                     self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
                                                         self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
@@ -571,7 +588,7 @@ class P2PNode:
                 status = ActionStatus.DONE.name
             )
             self.send_msg(msg, row["sender"])
-            # Finally, pay buyers as needed
+            # Finally, pay sellers as needed
             for i, post in used_postings.iterrows():
                 msg = dict(
                     uid = post["uid"],
@@ -588,9 +605,12 @@ class P2PNode:
     def restock(self):
         """
         Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
+        Alternatively, if a selling list was assigned to this (which we use
+        for testing cases), we get the item and quantity from the selling list.
         """
         self.clock_lock.acquire()
         uid = uuid.uuid4()
+        # Either pick random item and quantity, or get them from selling list.
         if len(self.selling_list) == 0:
             item = random.choice(list(Item)).name
             quantity = 20
@@ -598,7 +618,7 @@ class P2PNode:
             item_quantity_dict = self.selling_list.pop()
             item = list(item_quantity_dict.keys())[0]
             quantity = item_quantity_dict[item]
-
+        # Update vector clock and node log
         self.update_vector_clock_local_event()
         clock_lock_copy = copy.deepcopy(self.clock)
         self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
@@ -620,14 +640,6 @@ class P2PNode:
         self.clock_lock.release()
         return
 
-
-    def get_paid(self, price:int):
-        """
-        After trader finalizes sale, process payment from trader.
-        To
-        """
-        return
-
     def review_node_log(self):
         """
         Called by each non-leader node during the run_loop.
@@ -635,11 +647,10 @@ class P2PNode:
         If transactions have gone unACKED for too long,
         set self.leader to None to trigger election and set their status to NEEDS_RESEND.
         """
-        # FIXME: First, check the STARTED transactions to see if they've
-        # lingered too long. This will save the resending of msgs when the
-        # leader is down.
         self.node_log_lock.acquire_lock()
-        # Check how long since the last ACK. If it has been too long, we assume the leader has gone down.
+        # Check how long the oldest request has gone unACKed.
+        # If it has been too long, we assume the leader has gone down
+        # and set self.leader to None (which will trigger an election in run_loop)
         try:
             last_ack_ts = self.node_log[self.node_log["status"] == ActionStatus.ACKED.name]["timestamp"].max()
             longest_started_ts = self.node_log[self.node_log["status"] == ActionStatus.STARTED.name]["timestamp"].min()
@@ -651,7 +662,7 @@ class P2PNode:
         except Exception as e:
             print(e)
             raise Exception
-        # Assuming leader is still up, resend messages
+        # Assuming leader is still up, resend messages marked with NEEDS_RESEND
         if self.leader is not None:
             log = self.node_log.copy()
             log = log[log["status"] != ActionStatus.DONE.name]
@@ -661,9 +672,6 @@ class P2PNode:
                 status = row["status"]
                 timestamp = row["timestamp"]
                 if status == ActionStatus.NEEDS_RESEND.name:
-                    # Currently updated to retry initializing a buy request, will need to be updated for each request
-                    # type as they show up
-                    # also need to change message status in log and update timestamp
                     self.resend_msg(row)
         self.node_log_lock.release_lock()
         return
@@ -671,49 +679,48 @@ class P2PNode:
     def review_leader_log(self):
         """
         Called in each run_loop by the leader.
-        Check if we've caught up to the clock in any transactions still in the log.
+        Check if we've caught up to the clock of any transactions still in the log.
         If so, we can process those transactions.
         """
+        # Make a copy of the leader log so we don't have to lock it the whole time.
         with self.leader_log_lock:
             log = copy.deepcopy(self.leader_log)
-
+        # Iterate through entries in log that aren't DONE yet. If our clock has caught up to a given entry,
+        # we'll process it now.
         log = log[(log["status"] != ActionStatus.DONE.name) & (log["status"] != ActionStatus.NEEDS_RESEND.name)]
         self.leader_clock_lock.acquire_lock()
         for i, row in log.iterrows():
             # hack-y fix to get around datatype problems when reading from CSV, should probably be done differently
+            # This may no longer be needed.
             if type(row["clock"]) is str:
                 row["clock"] = {int(key): int(val) for key, val in [item.split(': ') for item in row["clock"][1:-1].split(', ')]}
 
-
             valid_clock_diff = self.verify_leader_clock_valid(row["clock"], row["sender"])
             if valid_clock_diff is True:
-                # process request
-                #if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
-                #    if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
+                # process request if clock is ready.
                 if (log.loc[log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
                     if (log.loc[log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
                         self.finalize_buy(row)
                         self.update_leader_log(uid=row["uid"], timestamp=datetime.now(), status=ActionStatus.DONE.name)
 
-                # update clock
+                # update leader clock
                 self.update_vector_clock_received_message_leader(row["clock"], row["sender"])
-                # set like this to only process one request per iteration of loop, although this may not
-                # be necessary and can probably be removed
         self.leader_clock_lock.release_lock()
 
         return
 
     def verify_leader_clock_valid(self, clock: dict, sender: int):
         """
-        Used to check if the current processing event is allowed next by the vector clock orderings
+        Used to check if the current processing event is allowed next by the vector clock orderings.
+        We implement some vector clock logic here.
         """
         return_bool = True
         for key in clock.keys():
             node_clock_val = self.leader_clock[key]
             other_node_clock = clock[key]
-            if key == sender:
+            if key == sender:  # Check that this is the next exected msg from sender
                 return_bool = return_bool and other_node_clock == node_clock_val + 1
-            else:
+            else:  # Check that we've seen every message from other nodes that sender has
                 return_bool = return_bool and other_node_clock <= node_clock_val
         return return_bool
 
@@ -726,25 +733,28 @@ class P2PNode:
         being down (a leader calling in sick). While down, we keep
         the queue empty.
         """
-        # Pick up log lock, and save log. Then delete log from node. Make sure to
-        # set is_leader to False before releasing lock, so that our message handling knows not to send an ACK
+        # Pick up log lock, and save log. Make sure to
+        # set is_leader to False before releasing lock,
+        # so that one we stop updating the log,
+        # our message handling won't send anymore ACKs,
+        # and the node won't otherwise act as leader
         print(f"{datetime.now()}, election, node {self.id} is resigning")
         self.is_leader_lock.acquire_lock()
         self.leader_clock_lock.acquire_lock()
         self.leader_log_lock.acquire_lock()
         self.is_leader = False
         self.leader = None
+        # Save leader log and leader clock to disk
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
             pickle.dump(self.leader_clock, file)
             print(f"{str(self.leader_clock)}")
-        self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log
+        self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log from this node
         self.leader_log_lock.release_lock()
         self.leader_clock_lock.release_lock()
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
         if sleep:
-            #wait_interval = random.choice(range(50, 60))
             wait_interval = random.choice(range(100, 110))
             wait_time = 0
             while wait_time < wait_interval:
@@ -752,6 +762,10 @@ class P2PNode:
                     socket_connection, addr = self.server_socket.accept()
                     data = socket_connection.recv(4096)
                     msg = pickle.loads(data)
+                    # Most msgs we recieve while resigned we just drop.
+                    # We do process STOP messages to allow for graceful
+                    # exits once the main process reaches the end of
+                    # its runtime.
                     if msg["type"] == ControlMsgType.STOP.name:
                         self.stop()
                         stopped = True
@@ -775,7 +789,6 @@ class P2PNode:
         # If we haven't started an election, do so now
         if self.get_most_recent_election(status=ActionStatus.STARTED.name) is not None:
             pass
-        #elif self.get_most_recent_election(status=ActionStatus.DONE.name) is not None:
         else:
             print(f"{datetime.now()}, election, node {self.id} is starting election")
             # Add election to node log
@@ -834,7 +847,8 @@ class P2PNode:
         Note we have to wait to pick up the leader log, such that the previous leader
         has time to save it.
         """
-        # We'll only pick up the log from the disk if we weren't already the leader
+        # We'll only pick up the log from the disk if we weren't already the leader,
+        # so we record our prior leader status here.
         already_leader = self.is_leader
         # Send out IWON msgs
         msg = dict(
@@ -859,8 +873,10 @@ class P2PNode:
         if not already_leader:
             self.leader_clock_lock.acquire_lock()
             self.leader_log_lock.acquire_lock()
-            #self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
+                # Perhaps foolishly, we store clocks as dicts in the dataframe column.
+                # When we read that from disk, pandas reads it in as a string. We here
+                # parse the string to make it a dict again.
                 disk_log = pd.read_csv(self.leader_log_path)
                 clock_df = pd.DataFrame(disk_log["clock"].str.strip("{}").str.split(", ").to_list())
                 for c in clock_df.columns: clock_df[c] = clock_df[c].str.slice(3)
@@ -868,16 +884,19 @@ class P2PNode:
                 disk_log["clock"] = pd.Series(clock_df.T.to_dict())
                 self.leader_log = pd.concat([disk_log, self.leader_log]).drop_duplicates(subset=["uid"], keep="last")
             if self.leader_clock_path.exists():
+                # Read clock from disk.
                 with open(self.leader_clock_path, "rb") as file:
                     disk_clock = pickle.load(file)
                     disk_clock_is_old = True
+                    # We only read the clock from disk if it's ahead of our current leader clock.
                     for i in disk_clock.keys(): disk_clock_is_old = disk_clock_is_old and disk_clock[i] <= self.leader_clock[i]
                     if not disk_clock_is_old:
                         self.leader_clock = disk_clock
                         print(f"{str(self.leader_clock)}")
-            #print(self.leader_log)
             # Any transactions in this node's log that haven't been
-            # acked yet need to be added to leader log
+            # acked yet need to be added to leader log, otherwise
+            # this leader's clock will stagnate, and this leader
+            # won't be able to process 
             self.node_log_lock.acquire()
             try:
                 self.node_log_to_leader_log()
@@ -895,6 +914,7 @@ class P2PNode:
         If this node is the leader, resign (which will save the leader log).
         Marks all ongoing elections as done.
         """
+        # If we're the current leader, resign.
         if self.is_leader:
             self.resign(sleep=False)
         self.leader = new_leader
@@ -916,7 +936,7 @@ class P2PNode:
         if we're looking for DONE or STARTED elections.
         Used to figure out when we've won an election (and thus need to send an IWON)
         and when the last finished election was (so if it was a long time ago, and there's
-        still no leader, we can start a new one).
+        still no leader, we can start a new election).
         """
         df = self.node_log.copy()
         elect_mask = (df["type"]==ActionType.ELECT.name)
@@ -933,7 +953,6 @@ class P2PNode:
         """
         Add entry to node_log.
         """
-        # FIXME: add log lock
         self.node_log_lock.acquire_lock()
         log_entry = dict(
             uid = uid,
@@ -946,6 +965,7 @@ class P2PNode:
         )
         try:
             if uid not in self.node_log["uid"].to_list():
+                # Only add the entry if it's not already in the log.
                 self.node_log.loc[len(self.node_log)] = log_entry
         except Exception as e:
             print(e)
@@ -961,21 +981,34 @@ class P2PNode:
         self.node_log_lock.acquire_lock()
         curr_status = self.node_log[self.node_log["uid"] == uid]["status"].iloc[0]
         if curr_status != ActionStatus.DONE.name:
+            # Only update UID's status if the UID isn't DONE yet.
             self.node_log.loc[self.node_log["uid"] == uid, "status"] = status
             self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
         self.node_log_lock.release_lock()
         return
     
     def node_log_to_leader_log(self):
+        """
+        This function adds any NEEDS_RESEND messages from the node log to the leader log.
+        This is so that when a node becomes leader, it stops sending BUY and RESTOCK
+        requests. Any NEEDS_RESEND messages have been sent out but were never added to
+        the leader log. That means other nodes have clocks reflect those messages, but the leader
+        log doesn't ahve those messages. These facts combine to mean that, if we don't add
+        these messages to the leader log, then the leader clock will stagnate until this node
+        is no longer the leader. Hence, we do add NEEDS_RESEND msgs to the log here.
+        """
+        # Get the unacked transcations from node log and update them to match leader log formatting
         node_log = self.node_log.copy()
         unacked_transactions = node_log[node_log["status"].isin([ActionStatus.STARTED.name, ActionStatus.NEEDS_RESEND.name]) ]
         unacked_transactions = unacked_transactions[unacked_transactions["type"].isin([BuyMsgType.INIT.name, BuyMsgType.RESTOCK.name])]
         unacked_transactions["sender"] = self.id
         unacked_transactions["status"] = ActionProcessStatus.RECIEVED.name
+        # Add these transactions to leader log, and then set their status in the node log as ACKED.
         self.leader_log = pd.concat([self.leader_log, unacked_transactions]).reset_index(drop=True)
         self.node_log["status"] = np.where(self.node_log["uid"].isin(unacked_transactions["uid"].to_list()),
                                            ActionStatus.ACKED.name,
                                            self.node_log["status"])
+        # Below statements used for debugging.
         if self.id == 3:
             pass
         if (self.leader_log.groupby("uid").count() > 1).any().any():
@@ -984,7 +1017,7 @@ class P2PNode:
     
     def append_to_leader_log(self, msg, transaction_type):
         """
-        Append transaction to leader log. If we already have this UID in the log,
+        Append transaction from msg to leader log. If we already have this UID in the log,
         don't add it.
         """
         log_entry = dict(
@@ -1027,7 +1060,6 @@ class P2PNode:
         """
         for i in self.clock.keys():
             self.clock[i] = max(received_clock[i], self.clock[i])
-        #self.clock[sender_id] = max(received_clock[sender_id], self.clock[sender_id])
 
     def update_vector_clock_received_message_leader(self, received_clock: dict, sender_id: int):
         """
@@ -1035,7 +1067,6 @@ class P2PNode:
         """
         for i in self.leader_clock.keys():
             self.leader_clock[i] = max(received_clock[i], self.leader_clock[i])
-        # self.leader_clock[sender_id] = max(received_clock[sender_id], self.leader_clock[sender_id])
 
 
 
