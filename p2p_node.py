@@ -95,7 +95,8 @@ class P2PNode:
     def __init__(self, id: int, port_number: int, is_buyer: bool, is_seller: bool,
                  nodes: Dict[int, int],  # keys are IDs, vals are ports
                  shopping_list: list[Dict] | list=[],
-                 selling_list: list[Dict] | list=[]):
+                 selling_list: list[Dict] | list=[],
+                 max_requests:int = -1):
         """
         Initializes node by recording whether each node is a buyer or a seller,
         and a list of neighbors (all nodes in network). Also sets up
@@ -139,9 +140,12 @@ class P2PNode:
         self.last_election_ts = None
         self.leader_log_path = Path(r"leader_log.csv")
         self.leader_clock_path = Path(r"leader_clock")
+        self.timestamp_record_path = Path(f"node_{self.id}_timestamps.csv")
         # Optional attributes used for testing
         self.shopping_list = shopping_list
         self.selling_list = selling_list
+        self.max_requests = max_requests
+        self.cur_requests = 0
         # Locks
         self.is_leader_lock = None  # Used when sending acks to make sure acked transaction gets into log
         self.node_log_lock = None
@@ -242,12 +246,23 @@ class P2PNode:
                 elif not self.is_leader:
                     # We have a leader but we're not it. Buy and sell items.
                     # We only buy and sell after certain intervals.
-                    if self.is_seller:
-                        if datetime.now() > self.next_restock_ts:
-                            self.restock()
-                    if self.is_buyer:
-                        if datetime.now() > self.next_buy_ts:
-                            self.buy()
+                    if self.max_requests == -1 or self.cur_requests < self.max_requests:
+                        if self.is_seller:
+                            if datetime.now() > self.next_restock_ts:
+                                self.restock()
+                                self.cur_requests += 1
+                        if self.is_buyer:
+                            if datetime.now() > self.next_buy_ts:
+                                self.buy()
+                                self.cur_requests += 1
+                    else:
+                        if not (self.node_log.loc[self.node_log["type"] == BuyMsgType.INIT.name, "received_time"]).isna().any():
+                            self.node_log.to_csv(Path(f"node_{self.id}_request_timestamps.csv"))
+                            msg = dict(type=ControlMsgType.STOP.name)
+                            for nid in self.nodes.keys():
+                                self.send_msg(msg=msg, dest=nid)
+                            time.sleep(1)
+                            self.stop()
                     if True:
                         # Check if any entries have lingered too long (which we'll take to mean
                         # the leader went down), or if any need to be resent
@@ -988,7 +1003,7 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
         self.node_log_lock.release_lock()
         if status == ActionStatus.ACKED.name:
-            self.node_log.loc[self.node_log["uid"] == uid, "acked_time"] = ActionStatus.ACKED.name
+            self.node_log.loc[self.node_log["uid"] == uid, "acked_time"] = time.time()
         return
     
     def node_log_to_leader_log(self):
