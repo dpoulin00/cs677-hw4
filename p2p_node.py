@@ -325,11 +325,13 @@ class P2PNode:
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
                 self.is_leader_lock.release_lock()
                 self.clock_lock.release()
+                self.is_leader_lock.acquire_lock()
                 if self.is_leader:
                     self.leader_log_lock.acquire()
                     self.append_to_leader_log(msg, transaction_type=ActionType.RESTOCK.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
                     self.leader_log_lock.release()
+                self.is_leader_lock.release_lock()
             case BuyMsgType.PAYMENT.name:
                 self.node_log_lock.acquire()
                 self.node_log.loc[self.node_log["uid"] == msg["uid"], "quantity"] -= msg["quantity"]
