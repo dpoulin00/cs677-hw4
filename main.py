@@ -59,7 +59,7 @@ def dict_to_network(node_dict: dict) -> dict[int, p2p.P2PNode]:
 
 def run_network(network: dict[int, p2p.P2PNode], run_time:int, stop_network:bool=False):
     #log_path = Path("leader_log.csv")
-    log_path = Path("leader_log.feather")
+    log_path = Path("leader_log.csv")
     clock_path = Path("leader_clock")
     if log_path.exists():
         log_path.unlink()

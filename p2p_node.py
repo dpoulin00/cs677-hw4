@@ -641,7 +641,7 @@ class P2PNode:
                 # Check if action has gone unacked for too long.
                 # If so, set leader to False and break out of
                 # loop. This will lead to an election
-                if timestamp + timedelta(0, 30) < datetime.now():
+                if timestamp + timedelta(0, 30) < datetime.now(): # FIXME: this is based on any transaction, really it should be based on when the last ACK came in
                     self.leader = None
                     self.node_log.loc[self.node_log["status"] == ActionStatus.STARTED.name,
                                       "status"] = ActionStatus.NEEDS_RESEND.name
@@ -709,10 +709,10 @@ class P2PNode:
         # set is_leader to False before releasing lock, so that our message handling knows not to send an ACK
         print(f"{datetime.now()}, election, node {self.id} is resigning")
         self.is_leader_lock.acquire_lock()
-        self.is_leader = False
-        #self.leader = None
         self.leader_clock_lock.acquire_lock()
         self.leader_log_lock.acquire_lock()
+        self.is_leader = False
+        self.leader = None
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
             pickle.dump(self.leader_clock, file)
@@ -837,15 +837,14 @@ class P2PNode:
         if not already_leader:
             self.leader_clock_lock.acquire_lock()
             self.leader_log_lock.acquire_lock()
-            self.leader_log = self.leader_log.drop(self.leader_log.index)
+            #self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
-                self.leader_log = pd.read_csv(self.leader_log_path)
-                clock_df = pd.DataFrame(self.leader_log["clock"].str.strip("{}").str.split(", ").to_list())
+                disk_log = pd.read_csv(self.leader_log_path)
+                clock_df = pd.DataFrame(disk_log["clock"].str.strip("{}").str.split(", ").to_list())
                 for c in clock_df.columns: clock_df[c] = clock_df[c].str.slice(3)
                 clock_df = clock_df.astype(int)
-                self.leader_log["clock"] = pd.Series(clock_df.T.to_dict())
-                if self.leader_log.shape[0] == 0:
-                    print("Read-in leader log was empty. This may or may not be a bug.")
+                disk_log["clock"] = pd.Series(clock_df.T.to_dict())
+                self.leader_log = pd.concat([disk_log, self.leader_log]).drop_duplicates(subset=["uid"], keep="last")
             if self.leader_clock_path.exists():
                 with open(self.leader_clock_path, "rb") as file:
                     self.leader_clock = pickle.load(file)
