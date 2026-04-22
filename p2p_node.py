@@ -312,13 +312,13 @@ class P2PNode:
                 self.clock_lock.acquire()
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
                 self.clock_lock.release()
-                self.leader_log_lock.acquire()
                 self.is_leader_lock.acquire_lock()
+                self.leader_log_lock.acquire()
                 if self.is_leader:
                     self.append_to_leader_log(msg, transaction_type=ActionType.BUY.name)
                     self.send_ack(uid=msg["uid"], dest=msg["sender"])
-                self.is_leader_lock.release_lock()
                 self.leader_log_lock.release()
+                self.is_leader_lock.release_lock()
             case BuyMsgType.RESTOCK.name:
                 self.clock_lock.acquire()
                 self.is_leader_lock.acquire_lock()
@@ -779,15 +779,15 @@ class P2PNode:
         print(f"{datetime.now()}, election, node {self.id} is resigning")
         self.is_leader_lock.acquire_lock()
         self.is_leader = False
-        self.leader_log_lock.acquire_lock()
         self.leader_clock_lock.acquire_lock()
+        self.leader_log_lock.acquire_lock()
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
             pickle.dump(self.leader_clock, file)
             print(f"{str(self.leader_clock)}")
         self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log
-        self.leader_clock_lock.release_lock()
         self.leader_log_lock.release_lock()
+        self.leader_clock_lock.release_lock()
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
         if sleep:
@@ -902,8 +902,8 @@ class P2PNode:
         # Wait a few seconds, then pick up the log. This gives old leader time to save it.
         time.sleep(10)
         if not already_leader:
-            self.leader_log_lock.acquire_lock()
             self.leader_clock_lock.acquire_lock()
+            self.leader_log_lock.acquire_lock()
             self.leader_log = self.leader_log.drop(self.leader_log.index)
             if self.leader_log_path.exists():
                 self.leader_log = pd.read_csv(self.leader_log_path)
@@ -912,14 +912,14 @@ class P2PNode:
                 clock_df = clock_df.astype(int)
                 self.leader_log["clock"] = pd.Series(clock_df.T.to_dict())
                 if self.leader_log.shape[0] == 0:
-                    raise Exception
+                    print("Read-in leader log was empty. This may or may not be a bug.")
             if self.leader_clock_path.exists():
                 with open(self.leader_clock_path, "rb") as file:
                     self.leader_clock = pickle.load(file)
                     print(f"{str(self.leader_clock)}")
             #print(self.leader_log)
-            self.leader_clock_lock.release_lock()
             self.leader_log_lock.release_lock()
+            self.leader_clock_lock.release_lock()
         return
     
     def youwon(self, new_leader):
