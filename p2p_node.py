@@ -133,9 +133,8 @@ class P2PNode:
         self.next_buy_ts = datetime.now() + timedelta(0,random.randint(1,10))  # days, seconds
         # Attributes use by leaders and for elections
         self.resigned = False  # Set to true temporarily when we resign
-        self.leader_log = pd.DataFrame(  # Record transactions. Including when waiting for clock to catch up.
-            columns=["uid", "timestamp", "clock", "sender", "type", "item", "quantity", "status"]
-        )
+        self.leader_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "sender", "type", "item", "quantity", "status", "init_time", "acked_time", "received_time"])
+        self.elections = dict()  # keys are UIDs, values are timestamps
         self.next_resign_ts = None
         self.last_election_ts = None
         self.leader_log_path = Path(r"leader_log.csv")
@@ -246,23 +245,22 @@ class P2PNode:
                 elif not self.is_leader:
                     # We have a leader but we're not it. Buy and sell items.
                     # We only buy and sell after certain intervals.
-                    if self.max_requests == -1 or self.cur_requests < self.max_requests:
-                        if self.is_seller:
-                            if datetime.now() > self.next_restock_ts:
-                                self.restock()
-                                self.cur_requests += 1
-                        if self.is_buyer:
-                            if datetime.now() > self.next_buy_ts:
-                                self.buy()
-                                self.cur_requests += 1
-                    else:
-                        if not (self.node_log.loc[self.node_log["type"] == BuyMsgType.INIT.name, "received_time"]).isna().any():
-                            self.node_log.to_csv(Path(f"node_{self.id}_request_timestamps.csv"))
-                            msg = dict(type=ControlMsgType.STOP.name)
-                            for nid in self.nodes.keys():
-                                self.send_msg(msg=msg, dest=nid)
-                            time.sleep(1)
-                            self.stop()
+
+                    if self.is_seller:
+                        if datetime.now() > self.next_restock_ts:
+                            self.restock()
+                            self.cur_requests += 1
+                    if self.is_buyer:
+                        if datetime.now() > self.next_buy_ts:
+                            self.buy()
+                            self.cur_requests += 1
+                    if self.max_requests is not -1 and self.cur_requests > self.max_requests and (~self.node_log["acked_time"].isna()).sum() >= self.max_requests:
+                        self.node_log.to_csv(Path(f"node_{self.id}_request_timestamps.csv"))
+                        msg = dict(type=ControlMsgType.STOP.name)
+                        for nid in self.nodes.keys():
+                            self.send_msg(msg=msg, dest=nid)
+                        time.sleep(1)
+                        self.stop()
                     if True:
                         # Check if any entries have lingered too long (which we'll take to mean
                         # the leader went down), or if any need to be resent
@@ -1020,6 +1018,7 @@ class P2PNode:
         node_log = self.node_log.copy()
         unacked_transactions = node_log[node_log["status"].isin([ActionStatus.STARTED.name, ActionStatus.NEEDS_RESEND.name]) ]
         unacked_transactions = unacked_transactions[unacked_transactions["type"].isin([BuyMsgType.INIT.name, BuyMsgType.RESTOCK.name])]
+        unacked_transactions.loc[unacked_transactions["type"] == BuyMsgType.INIT.name, "type"] = ActionType.BUY.name
         unacked_transactions["sender"] = self.id
         unacked_transactions["status"] = ActionProcessStatus.RECIEVED.name
         # Add these transactions to leader log, and then set their status in the node log as ACKED.
