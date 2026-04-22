@@ -363,19 +363,27 @@ class P2PNode:
                 # If msg is an ack, we'll record it in node log.
                 self.recieve_ack(msg)
             case ElecMsgType.ELECT.name:
+                # If message is an ELECT, we act according to bully algorithm.
+                # If we have a higher id than sender, send back an OK and initiate
+                # our own election. Otherwise, don't respond.
                 if self.id > msg["sender"]:
                     self.okay(msg)
                     self.elect()
             case ElecMsgType.OKAY.name:
+                # If message is an OKAY, we lost the election, and will wait
+                # for a new leader to send out an IWON (or until a certain
+                # time interval elapses and we start a new election). im_okay()
+                # facilitates this reaction.
                 self.im_okay(uid=msg["uid"])
             case ElecMsgType.IWON.name:
+                # If we receive an IWON, we call youwon, which will set the leader
+                # to the msg's sender, and update node attributes as needed to
+                # reflect the change in leader.
+                #self.node_log.to_csv(f"logs/node_{self.id}_log.csv")  # For debugging, we save node log
                 self.youwon(new_leader = msg["sender"])
-                try:
-                    self.node_log.to_csv(f"logs/node_{self.id}_log.csv")
-                except Exception as e:
-                    print(e)
-                    raise Exception
             case ControlMsgType.STOP.name:
+                # If we receive a STOP message, it's time to shut down.
+                # Call self.stop() to facilitate this.
                 self.stop()
         return
     
@@ -680,8 +688,10 @@ class P2PNode:
             valid_clock_diff = self.verify_leader_clock_valid(row["clock"], row["sender"])
             if valid_clock_diff is True:
                 # process request
-                if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
-                    if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
+                #if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
+                #    if (self.leader_log.loc[self.leader_log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
+                if (log.loc[log["uid"] == row["uid"], "status"] == ActionProcessStatus.RECIEVED.name).any():
+                    if (log.loc[log["uid"] == row["uid"], "type"]  == ActionType.BUY.name).any():
                         self.finalize_buy(row)
                         self.update_leader_log(uid=row["uid"], timestamp=datetime.now(), status=ActionStatus.DONE.name)
 

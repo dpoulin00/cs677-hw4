@@ -225,6 +225,11 @@ def test_elections_work():
     function properly, according to the bully algorithm.
 
     We expect, as different nodes become leader, for transactions to continue.
+    Further, we expect first for node 9 to be the leader, and then for node 8 to
+    become leader when node 9 resigns (after node 8 wins teh election). As soon
+    as node 9 comes back online, it should start and win an election to become leader,
+    but if node 8 resigns while node 9 is still down, node 7 should start and win an
+    election.
     """
     network = main.make_random_network(num_nodes=10, start_port=49152)
     main.run_network(network=network, run_time=10000)
