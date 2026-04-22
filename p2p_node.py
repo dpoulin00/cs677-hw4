@@ -847,8 +847,12 @@ class P2PNode:
                 self.leader_log = pd.concat([disk_log, self.leader_log]).drop_duplicates(subset=["uid"], keep="last")
             if self.leader_clock_path.exists():
                 with open(self.leader_clock_path, "rb") as file:
-                    self.leader_clock = pickle.load(file)
-                    print(f"{str(self.leader_clock)}")
+                    disk_clock = pickle.load(file)
+                    disk_clock_is_old = True
+                    for i in disk_clock.keys(): disk_clock_is_old = disk_clock_is_old and disk_clock[i] <= self.leader_clock[i]
+                    if not disk_clock_is_old:
+                        self.leader_clock = disk_clock
+                        print(f"{str(self.leader_clock)}")
             #print(self.leader_log)
             # Any transactions in this node's log that haven't been
             # acked yet need to be added to leader log
