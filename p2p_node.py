@@ -24,7 +24,10 @@ def custom_hook(args):
     print(f"Thread failed: {args.exc_type.__name__}: {args.exc_value}")
 threading.excepthook = custom_hook
 
-
+# We define several class that inherit enums. These are used throughout
+# the program to define message types, transaction statuses, etc.
+# While we only ever use the .name atrribute (which is just a string),
+# this still helps us avoid typos in strings.
 class Role(Enum):
     """Defines types of nodes."""
     BUYER = 0
@@ -94,20 +97,20 @@ class P2PNode:
                  shopping_list: list[Dict] | list=[],
                  selling_list: list[Dict] | list=[]):
         """
-        Initializes node by recording whether eacah is a buyer or a seller,
+        Initializes node by recording whether each node is a buyer or a seller,
         and a list of neighbors (all nodes in network). Also sets up
         some data structures we'll need.
         """
-        # Unique to each node
+        # Fixed details about this node
         self.id = id
         self.port_number = port_number
         self.server_socket = socket.socket()
         self.node_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "type", "item", "quantity", "status"])
-        # Attributes used by all nodes
+        # Attributes used by all nodes throughout operation
         self.num_sent_msgs = 0
         self.num_accepted_msgs = 0
         self.nodes = nodes
-        node_keys = list(nodes.keys())
+        node_keys = list(nodes.keys())  # Used to iterate through vector clock.
         node_keys.append(self.id)
         node_keys.sort()
         self.clock = {id:0 for id in node_keys}
@@ -115,8 +118,8 @@ class P2PNode:
         self.is_buyer = is_buyer
         self.is_seller = is_seller
         self.is_leader = False
-        self.leader = None
-        self.running = False  # Set to true and false by parent process
+        self.leader = None  # Used to determine who the leader if. If None, we'll assume there is no leader.
+        self.running = False  # Set to true on startup, set to false on receiving a STOP msg
         # Attributes used by sellers
         self.next_restock_ts = datetime.now() + timedelta(0,random.randint(12,15))  # days, seconds
         self.revenue = 0
@@ -129,8 +132,9 @@ class P2PNode:
         self.next_buy_ts = datetime.now() + timedelta(0,random.randint(1,10))  # days, seconds
         # Attributes use by leaders and for elections
         self.resigned = False  # Set to true temporarily when we resign
-        self.leader_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "sender", "type", "item", "quantity", "status"])
-        self.elections = dict()  # keys are UIDs, values are timestamps
+        self.leader_log = pd.DataFrame(  # Record transactions. Including when waiting for clock to catch up.
+            columns=["uid", "timestamp", "clock", "sender", "type", "item", "quantity", "status"]
+        )
         self.next_resign_ts = None
         self.last_election_ts = None
         self.leader_log_path = Path(r"leader_log.csv")
@@ -141,7 +145,7 @@ class P2PNode:
         # Locks
         self.is_leader_lock = None  # Used when sending acks to make sure acked transaction gets into log
         self.node_log_lock = None
-        self.leader_log_lock = None
+        self.leader_log_lock = None  # Used when we only want to do something while leader, e.g., acking messages.
         self.clock_lock = None # Used to update the clock when a new request is made
         self.leader_clock_lock = None # Used when the current node is elected as leader.
         self.revenue_lock = None # Used when incrementing revenue on making a sale
@@ -150,16 +154,14 @@ class P2PNode:
     def start(self):
         """
         Called by parent process to start node running.
-        Sets self.running to True, sets up socket, and starts run loop
-        Since we only have one loop, no need to spawn a thread for run loop.
+        Sets self.running to True, sets up socket, and starts run loop.
         """
-        #debugpy.debug_this_thread()
         # Set up server socket
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.settimeout(100)  # Time out so we can gracefully exit once we stop seeing messages.
         self.server_socket.bind((socket.gethostname(), self.port_number))
-        self.server_socket.listen(10000)
+        self.server_socket.listen(100000)
         # Set up locks
         self.is_leader_lock = threading.Lock()
         self.node_log_lock = threading.Lock()
@@ -170,13 +172,8 @@ class P2PNode:
         # Start run loop (after waiting 1 second so all nodes are online)
         time.sleep(1)
         self.running = True
-        # create file to store leader clock
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
-        try:
-            self.run_loop()
-        except Exception as e:
-            print(e)
-            raise Exception
+        self.run_loop()
         return
     
     def stop(self):
