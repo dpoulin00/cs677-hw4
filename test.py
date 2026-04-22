@@ -217,6 +217,19 @@ def test_buyer_and_seller_does_both():
     main.run_network(network=network, run_time=150)
     return
 
+def test_elections_work():
+    """
+    Rather than defining a network, this test
+    uses a random network, but a longer runtime than our other
+    tests. THis is so we can see if, after nodes resign, elections
+    function properly, according to the bully algorithm.
+
+    We expect, as different nodes become leader, for transactions to continue.
+    """
+    network = main.make_random_network(num_nodes=10, start_port=49152)
+    main.run_network(network=network, run_time=1000)
+    return
+
 def test_6_nodes():
     return
 
@@ -230,6 +243,7 @@ if __name__ == "__main__":
     # test_no_buyers()
     # test_no_salt_sellers()
     # test_not_enough_boar()
-    test_buyer_and_seller_does_both()
+    # test_buyer_and_seller_does_both()
+    test_elections_work()
 
 
