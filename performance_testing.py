@@ -43,7 +43,7 @@ def make_performance_test_network(num_nodes: int, start_port, max_requests=-1, n
 
 if __name__ == "__main__":
     start_port = 49152
-    network = make_performance_test_network(num_nodes=6, start_port=start_port, max_requests=1000, node_to_set=0)
+    network = make_performance_test_network(num_nodes=6, start_port=start_port, max_requests=5, node_to_set=0)
     run_network(network=network, run_time=10000, stop_network=True)
 
     timestamp_path = Path("node_0_request_timestamps.csv")
