@@ -105,8 +105,8 @@ class P2PNode:
         self.id = id
         self.port_number = port_number
         self.server_socket = socket.socket()
-        self.node_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "type", "item", "quantity", "status"])
-        # Attributes used by all nodes throughout operation
+        self.node_log = pd.DataFrame(columns=["uid", "timestamp", "clock", "type", "item", "quantity", "status", "init_time", "acked_time", "received_time"])
+        # Attributes used by all nodes
         self.num_sent_msgs = 0
         self.num_accepted_msgs = 0
         self.nodes = nodes
@@ -358,6 +358,7 @@ class P2PNode:
                     print(f"{datetime.now()}, {msg["uid"]}, Node {self.id} purchased {msg['quantity']} {msg["item"]}.")
                 else:
                     print(f"{datetime.now()}, {msg["uid"]}, Node {self.id} failed to purchase {msg["item"]}, there were none in stock when attempting to purchase.")
+                self.node_log.loc[self.node_log["uid"] == msg["uid"], "received_time"] = time.time()
                 self.node_log_lock.release()
             case ControlMsgType.ACK.name:
                 # If msg is an ack, we'll record it in node log.
@@ -896,7 +897,7 @@ class P2PNode:
             # Any transactions in this node's log that haven't been
             # acked yet need to be added to leader log, otherwise
             # this leader's clock will stagnate, and this leader
-            # won't be able to process 
+            # won't be able to process
             self.node_log_lock.acquire()
             try:
                 self.node_log_to_leader_log()
@@ -961,7 +962,8 @@ class P2PNode:
             type = type,
             item = item,
             quantity = quantity,
-            status = status
+            status = status,
+            init_time = time.time()
         )
         try:
             if uid not in self.node_log["uid"].to_list():
@@ -985,6 +987,8 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == uid, "status"] = status
             self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
         self.node_log_lock.release_lock()
+        if status == ActionStatus.ACKED.name:
+            self.node_log.loc[self.node_log["uid"] == uid, "acked_time"] = ActionStatus.ACKED.name
         return
     
     def node_log_to_leader_log(self):
