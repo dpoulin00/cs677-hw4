@@ -175,7 +175,8 @@ class P2PNode:
         try:
             self.run_loop()
         except Exception as e:
-            pass
+            print(e)
+            raise Exception
         return
     
     def stop(self):
@@ -265,6 +266,7 @@ class P2PNode:
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
                     if last_election_ts is not None:
                         next_resign_ts = last_election_ts + timedelta(0, 60)  # days, seconds
+                        #next_resign_ts = last_election_ts + timedelta(0, 10)  # days, seconds
                     else:  # This shouldn't happen, but in we get here before log is saved, we won't resign yet
                         next_resign_ts = datetime.now() + timedelta(0, 10)
                     if datetime.now() > next_resign_ts:
@@ -366,7 +368,8 @@ class P2PNode:
                 try:
                     self.node_log.to_csv(f"logs/node_{self.id}_log.csv")
                 except Exception as e:
-                    pass
+                    print(e)
+                    raise Exception
             case ControlMsgType.STOP.name:
                 self.stop()
         return
@@ -383,8 +386,9 @@ class P2PNode:
             try:
                 if (msg_clock_time - 1 > 0) and (msg_clock_time - 1 not in prev_clock_times):
                     raise Exception
-            except:
-                pass
+            except Exception as e:
+                print(e)
+                raise Exception
 
         self.num_sent_msgs += 1
         #print(self.num_sent_msgs)
@@ -407,7 +411,7 @@ class P2PNode:
         """
 
         if row["type"] == BuyMsgType.INIT.name:
-            self.node_log_lock.acquire_lock()
+            #self.node_log_lock.acquire_lock()
             msg = dict(
                 uid = row["uid"],
                 sender = self.id,
@@ -417,11 +421,11 @@ class P2PNode:
                 quantity = row["quantity"],
             )
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
-            self.node_log_lock.release()
+            #self.node_log_lock.release()
             self.send_msg(msg, self.leader)
             print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
         elif row["type"] == BuyMsgType.RESTOCK.name:
-            self.node_log_lock.acquire_lock()
+            #self.node_log_lock.acquire_lock()
             msg = dict(
                 uid = row["uid"],
                 sender = self.id,
@@ -431,7 +435,7 @@ class P2PNode:
                 quantity = row["quantity"],
             )
             self.node_log.loc[self.node_log["uid"] == row["uid"], "status"] = ActionStatus.STARTED.name
-            self.node_log_lock.release()
+            #self.node_log_lock.release()
             self.send_msg(msg, self.leader)
             print(f"{datetime.now()}, {msg["uid"]}, {msg["type"]}, resending msg")
     
@@ -509,138 +513,62 @@ class P2PNode:
         return
     
     def finalize_buy(self, row):
-        with self.leader_log_lock:  # acquire lock so we sell each item only once
-            # Pull out postings we could buy from
-            requested_quantity = row["quantity"]
-            postings = self.leader_log.copy()
-            postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
-                                & (postings["item"] == row["item"])
-                                & (postings["sender"] != self.id) ]
-            # print(postings)
-            # Figure out which postings we'll buy items from
-            postings["cumsum"] = postings["quantity"].cumsum()
-            postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,
-                                             postings["cumsum"] - requested_quantity,
-                                             0)
-            used_postings = postings[postings["left over"] < postings["quantity"]]
-            # Figure out how much we'll buy from each posting, and then update the log
-            used_postings["amount bought"] = used_postings["quantity"] - used_postings["left over"]
-            used_uids = used_postings["uid"].to_list()
-            try:
-                self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
-                                                    self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
-                                                    self.leader_log["quantity"])
-                self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & (self.leader_log["quantity"] == 0),
-                                                     ActionStatus.DONE.name,
-                                                     self.leader_log["status"])
-            except Exception as e:
-                pass
-        # Send message to buyer telling them how much we bought.
-        bought_quantity = int(used_postings["amount bought"].sum())
-        msg = dict(
-            uid = row["uid"],
-            sender = self.id,
-            clock = row["clock"],
-            type = BuyMsgType.FINISH_TRANSACTION.name,
-            item = row["item"],
-            quantity = bought_quantity,
-            status = ActionStatus.DONE.name
-        )
-        self.send_msg(msg, row["sender"])
-        # Finally, pay buyers as needed
-        for i, post in used_postings.iterrows():
+        if row["sender"] == self.id:
+            pass  # the leader does not buy or sell
+        else:
+            with self.leader_log_lock:  # acquire lock so we sell each item only once
+                # Pull out postings we could buy from
+                requested_quantity = row["quantity"]
+                postings = self.leader_log.copy()
+                postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
+                                    & (postings["item"] == row["item"])
+                                    & (postings["sender"] != self.id) ]
+                # print(postings)
+                # Figure out which postings we'll buy items from
+                postings["cumsum"] = postings["quantity"].cumsum()
+                postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,
+                                                postings["cumsum"] - requested_quantity,
+                                                0)
+                used_postings = postings[postings["left over"] < postings["quantity"]]
+                # Figure out how much we'll buy from each posting, and then update the log
+                used_postings["amount bought"] = used_postings["quantity"] - used_postings["left over"]
+                used_uids = used_postings["uid"].to_list()
+                try:
+                    self.leader_log["quantity"] = np.where(self.leader_log["uid"].isin(used_uids),
+                                                        self.leader_log["uid"].map(used_postings.set_index("uid")["left over"]),
+                                                        self.leader_log["quantity"])
+                    self.leader_log["status"] = np.where(self.leader_log["uid"].isin(used_uids) & (self.leader_log["quantity"] == 0),
+                                                        ActionStatus.DONE.name,
+                                                        self.leader_log["status"])
+                except Exception as e:
+                    print(e)
+                    raise Exception
+            # Send message to buyer telling them how much we bought.
+            bought_quantity = int(used_postings["amount bought"].sum())
             msg = dict(
-                uid = post["uid"],
+                uid = row["uid"],
                 sender = self.id,
-                clock = post["clock"],
-                type = BuyMsgType.PAYMENT.name,
-                item = post["item"],
-                quantity = post["amount bought"],
+                clock = row["clock"],
+                type = BuyMsgType.FINISH_TRANSACTION.name,
+                item = row["item"],
+                quantity = bought_quantity,
                 status = ActionStatus.DONE.name
             )
-            self.send_msg(msg, post["sender"])
-        
-        return
-
-    def finalize_buy_old(self, row):
-        """
-        called when trader sends back message confirming the buy went through.
-        """
-
-        requested_quantity = row["quantity"]
-        requested_quantity_copy = row["quantity"]
-        # in the case that there are no valid items to buy, peer is informed
-        while requested_quantity >= 0:
-            # valid postings to buy from are from senders who are not the leader who still have items in stock
-            valid_rows = self.leader_log[self.leader_log["type"] == ActionType.RESTOCK.name]
-            valid_rows = valid_rows[valid_rows["sender"] != self.id]
-            valid_items = valid_rows[valid_rows["item"] == row["item"]]
-            if valid_items.empty or requested_quantity == 0:
-                self.leader_log.loc[self.leader_log["uid"] == row["uid"],
-                "status"] = ActionStatus.DONE.name
+            self.send_msg(msg, row["sender"])
+            # Finally, pay buyers as needed
+            for i, post in used_postings.iterrows():
                 msg = dict(
-                    uid = row["uid"],
+                    uid = post["uid"],
                     sender = self.id,
-                    clock = row["clock"],
-                    type = BuyMsgType.FINISH_TRANSACTION.name,
-                    item = row["item"],
-                    quantity = requested_quantity_copy - requested_quantity,
+                    clock = post["clock"],
+                    type = BuyMsgType.PAYMENT.name,
+                    item = post["item"],
+                    quantity = post["amount bought"],
                     status = ActionStatus.DONE.name
                 )
-                self.send_msg(msg, row["sender"])
-                return
-            # otherwise, find appropriate seller
-            else:
-                min_timestamp = math.inf
-                sender = None
-
-                # send message back with peer having min timestamp
-                for i, item in valid_items.iterrows():
-                    cur_clock = item["clock"]
-                    if type(cur_clock) is str:
-                        cur_clock = {int(key): int(val) for key, val in
-                                        [item.split(': ') for item in cur_clock[1:-1].split(', ')]}
-                    cur_sender = item["sender"]
-                    cur_timestamp = cur_clock[cur_sender]
-                    if cur_timestamp < min_timestamp:
-                        min_timestamp = cur_timestamp
-                        sender = item
-
-                # If sender has total amount of requested quantity, buy all from this seller. Otherwise,
-                # split across sellers
-
-                cur_seller_quantity = sender["quantity"]
-                msg = None
-                if cur_seller_quantity >= requested_quantity:
-                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "quantity"] = cur_seller_quantity - requested_quantity
-                    msg = dict(
-                        uid=sender["uid"],
-                        sender=self.id,
-                        clock=sender["clock"],
-                        type=BuyMsgType.PAYMENT.name,
-                        item=sender["item"],
-                        quantity=requested_quantity_copy - (requested_quantity_copy - requested_quantity),
-                        status=ActionStatus.DONE.name
-                    )
-                    if cur_seller_quantity == requested_quantity:
-                        self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
-                else:
-                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "quantity"] = 0
-                    self.leader_log.loc[self.leader_log["uid"] == row["uid"], "status"] = ActionStatus.DONE.name
-                    msg = dict(
-                        uid=sender["uid"],
-                        sender=self.id,
-                        clock=sender["clock"],
-                        type=BuyMsgType.PAYMENT.name,
-                        item=sender["item"],
-                        quantity=cur_seller_quantity,
-                        status=ActionStatus.ACKED.name
-                    )
-                requested_quantity -= min(cur_seller_quantity, requested_quantity)
-
-                self.send_msg(msg, sender["sender"])
+                self.send_msg(msg, post["sender"])
         return
-    
+
     def restock(self):
         """
         Seller picks new item, stocks a certain amount of it, and sends message to leader indicating this.
@@ -694,6 +622,7 @@ class P2PNode:
         # FIXME: First, check the STARTED transactions to see if they've
         # lingered too long. This will save the resending of msgs when the
         # leader is down.
+        self.node_log_lock.acquire_lock()
         log = self.node_log.copy()
         log = log[log["status"] != ActionStatus.DONE.name]
         for i, row in log.iterrows():
@@ -713,11 +642,10 @@ class P2PNode:
                 # loop. This will lead to an election
                 if timestamp + timedelta(0, 30) < datetime.now():
                     self.leader = None
-                    self.node_log_lock.acquire_lock()
                     self.node_log.loc[self.node_log["status"] == ActionStatus.STARTED.name,
                                       "status"] = ActionStatus.NEEDS_RESEND.name
-                    self.node_log_lock.release_lock()
                     break
+        self.node_log_lock.release_lock()
         return
     
     def review_leader_log(self):
@@ -793,7 +721,8 @@ class P2PNode:
         self.is_leader_lock.release_lock()
         # Go offline for wait_interval seconds. Keep socket queue clear while offline.
         if sleep:
-            wait_interval = random.choice(range(10, 20))
+            #wait_interval = random.choice(range(50, 60))
+            wait_interval = random.choice(range(100, 110))
             wait_time = 0
             while wait_time < wait_interval:
                 while select.select([self.server_socket], [], [], 0.1)[0]:
@@ -920,6 +849,15 @@ class P2PNode:
                     self.leader_clock = pickle.load(file)
                     print(f"{str(self.leader_clock)}")
             #print(self.leader_log)
+            # Any transactions in this node's log that haven't been
+            # acked yet need to be added to leader log
+            self.node_log_lock.acquire()
+            try:
+                self.node_log_to_leader_log()
+            except Exception as e:
+                print(e)
+                raise Exception
+            self.node_log_lock.release()
             self.leader_log_lock.release_lock()
             self.leader_clock_lock.release_lock()
         return
@@ -980,7 +918,8 @@ class P2PNode:
             if uid not in self.node_log["uid"].to_list():
                 self.node_log.loc[len(self.node_log)] = log_entry
         except Exception as e:
-            pass
+            print(e)
+            raise Exception
         self.node_log_lock.release_lock()
         return
 
@@ -995,6 +934,22 @@ class P2PNode:
             self.node_log.loc[self.node_log["uid"] == uid, "status"] = status
             self.node_log.loc[self.node_log["uid"] == uid, "timestamp"] = timestamp
         self.node_log_lock.release_lock()
+        return
+    
+    def node_log_to_leader_log(self):
+        node_log = self.node_log.copy()
+        unacked_transactions = node_log[node_log["status"].isin([ActionStatus.STARTED.name, ActionStatus.NEEDS_RESEND.name]) ]
+        unacked_transactions = unacked_transactions[unacked_transactions["type"].isin([BuyMsgType.INIT.name, BuyMsgType.RESTOCK.name])]
+        unacked_transactions["sender"] = self.id
+        unacked_transactions["status"] = ActionProcessStatus.RECIEVED.name
+        self.leader_log = pd.concat([self.leader_log, unacked_transactions]).reset_index(drop=True)
+        self.node_log["status"] = np.where(self.node_log["uid"].isin(unacked_transactions["uid"].to_list()),
+                                           ActionStatus.ACKED.name,
+                                           self.node_log["status"])
+        if self.id == 3:
+            pass
+        if (self.leader_log.groupby("uid").count() > 1).any().any():
+            pass
         return
     
     def append_to_leader_log(self, msg, transaction_type):
