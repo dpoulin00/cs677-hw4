@@ -278,7 +278,7 @@ class P2PNode:
         If returning True, we did receive a stop message.
         """
         stopped = False
-        # Check if there's a new message. If so, handle it
+        # We will continue this loop until there are no incoming messages.
         while select.select([self.server_socket], [], [], 0.1)[0]:
             self.num_accepted_msgs += 1
             socket_connection, addr = self.server_socket.accept()
@@ -290,9 +290,9 @@ class P2PNode:
                 # Helpful for debugging multiple threads, processes
                 print(f"Pickle exception:")
                 print(e)
-            # If the msg isn't a STOP, spawn a thread. But if
-            # it is a stop, we handle here, such that we
-            # can return False (and thus exit the run_loop)
+            # If the msg isn't a STOP, spawn a thread to handle it.
+            # But if it is a stop, we handle it here, such that we
+            # can call stop and return False (and thus immediately exit the run_loop)
             if msg["type"] != ControlMsgType.STOP.name:
                 executor.submit(self.handle_msg, msg, addr)
             else:
@@ -303,11 +303,15 @@ class P2PNode:
     
     def handle_msg(self, msg, addr):
         """
-        Unpickles msg, checks type, and calls corresponding function to handle it.
+        Unpickles msg, checks type, and handles it as needed.
         """
         # Parse message type and call the corresponding function
         match msg["type"]:
             case BuyMsgType.INIT.name:
+                # For buy messages, we increment this node's vector clock.
+                # If this node is the leader, we also add the node to the leader log and
+                # send an ack. Note that the leader log is used to store messages
+                # until our clock is such that we can accept them.
                 self.clock_lock.acquire()
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
                 self.clock_lock.release()
@@ -319,6 +323,8 @@ class P2PNode:
                 self.leader_log_lock.release()
                 self.is_leader_lock.release_lock()
             case BuyMsgType.RESTOCK.name:
+                # Similar to buy request. Increment node clock as needed, and
+                # update leader log if node is leader.
                 self.clock_lock.acquire()
                 self.is_leader_lock.acquire_lock()
                 self.update_vector_clock_received_message(msg["clock"], msg["sender"])
@@ -332,6 +338,8 @@ class P2PNode:
                     self.leader_log_lock.release()
                 self.is_leader_lock.release_lock()
             case BuyMsgType.PAYMENT.name:
+                # When we get payed for selling an item,
+                # reduce the item sold's quantity and record revenue.
                 self.node_log_lock.acquire()
                 self.node_log.loc[self.node_log["uid"] == msg["uid"], "quantity"] -= msg["quantity"]
                 self.node_log.loc[self.node_log["uid"] == msg["uid"], "status"] = msg["status"]
@@ -341,6 +349,9 @@ class P2PNode:
                 self.revenue_lock.release()
                 self.node_log_lock.release()
             case BuyMsgType.FINISH_TRANSACTION.name:
+                # If our submitted buy is being finished here, we
+                # mark the transactiona s done and print the results
+                # of transaction (amount bough and amount payed)
                 self.node_log_lock.acquire()
                 self.node_log.loc[self.node_log["uid"] == msg["uid"], "status"] = ActionStatus.DONE.name
                 if msg["quantity"] > 0:
@@ -349,11 +360,8 @@ class P2PNode:
                     print(f"{datetime.now()}, {msg["uid"]}, Node {self.id} failed to purchase {msg["item"]}, there were none in stock when attempting to purchase.")
                 self.node_log_lock.release()
             case ControlMsgType.ACK.name:
+                # If msg is an ack, we'll record it in node log.
                 self.recieve_ack(msg)
-            case ElecMsgType.RESIGN.name:  # TODO: REMOVE. THIS CASE NO LONGER USED
-                if self.leader == msg["sender"]:
-                    self.leader = None
-                self.elect()
             case ElecMsgType.ELECT.name:
                 if self.id > msg["sender"]:
                     self.okay(msg)
