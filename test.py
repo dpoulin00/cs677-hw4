@@ -126,6 +126,46 @@ def test_no_salt_sellers():
     return
 
 def test_not_enough_boar():
+    """
+    Create a case where more board is requested than is available.
+    We expect to see only one board request, and only 10 board, not the
+    11 requested, should be sold.
+    Note that the boar is requested only after several other requests,
+    such that we can be sure the boar is purchased after it is stock.
+    """
+    node_dict = {
+        0: {"port": 49152,
+            "role": p2p.Role.SELLER.name,
+            "shopping list": [{p2p.Item.FISH.name: 10}]*1000,
+            "selling list": [{p2p.Item.BOAR.name: 10}] + [{p2p.Item.FISH.name: 10}]*1000,},
+        1: {"port": 49153,
+            "role": p2p.Role.BUYER.name,
+            "shopping list": [{p2p.Item.FISH.name: 10}]*10 + [{p2p.Item.BOAR.name: 11}] + [{p2p.Item.FISH.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
+        2: {"port": 49154,
+            "role": p2p.Role.BUYER_AND_SELLER.name,
+            "shopping list": [{p2p.Item.SALT.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
+        3: {"port": 49155,
+            "role": p2p.Role.BUYER.name,
+            "shopping list": [{p2p.Item.FISH.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
+        4: {"port": 49156,
+            "role": p2p.Role.BUYER_AND_SELLER.name,
+            "shopping list": [{p2p.Item.FISH.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
+        5: {"port": 49157,
+            "role": p2p.Role.SELLER.name,
+            "shopping list": [{p2p.Item.SALT.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
+        6: {"port": 49158,
+            "role": p2p.Role.SELLER.name,
+            "shopping list": [{p2p.Item.SALT.name: 10}]*1000,
+            "selling list": [{p2p.Item.FISH.name: 10}]*1000,},
+            
+    }
+    network = main.dict_to_network(node_dict=node_dict)
+    main.run_network(network=network, run_time=100)
     return
 
 def test_6_nodes():
@@ -139,7 +179,8 @@ def test_100_nodes():
 if __name__ == "__main__":
     # test_no_sellers()
     # test_no_buyers()
-    test_no_salt_sellers()
+    # test_no_salt_sellers()
+    test_not_enough_boar()
     # test_buyer_and_seller_does_both()
 
 
