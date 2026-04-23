@@ -136,7 +136,7 @@ class P2PNode:
         self.last_election_ts = None
         self.leader_log_path = Path(r"leader_log.csv")
         self.leader_clock_path = Path(r"leader_clock")
-        self.timestamp_record_path = Path(f"node_{self.id}_timestamps.csv")
+        self.timestamp_record_path = Path(f"performance test logs/node_{self.id}_timestamps.csv")
         # Optional attributes used for testing
         self.shopping_list = shopping_list
         self.selling_list = selling_list
@@ -258,8 +258,8 @@ class P2PNode:
                         if datetime.now() > self.next_buy_ts:
                             self.buy()
                             self.cur_requests += 1
-                    if self.max_requests != -1 and self.cur_requests > self.max_requests and (~self.node_log["acked_time"].isna()).sum() >= self.max_requests:
-                        self.node_log.to_csv(Path(f"node_{self.id}_request_timestamps.csv"))
+                    if self.max_requests != -1 and self.cur_requests > self.max_requests:
+                        self.node_log.to_csv(self.timestamp_record_path)
                         msg = dict(type=ControlMsgType.STOP.name)
                         for nid in self.nodes.keys():
                             self.send_msg(msg=msg, dest=nid)
