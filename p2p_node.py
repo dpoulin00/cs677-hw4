@@ -794,6 +794,7 @@ class P2PNode:
                         break
                 time.sleep(1)
                 wait_time += 1
+            return stopped
             print(f"{datetime.now()}, node, node {self.id} is back online")
         return stopped
     
