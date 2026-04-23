@@ -235,7 +235,47 @@ def test_elections_work():
     main.run_network(network=network, run_time=10000)
     return
 
-def test_purchase_amounts_are_correct():
+def test_payment_amounts_are_correct():
+    """
+    The price for each product is predefined as
+    1 for SALT, 5 for FISH, and 10 for BOAR.
+    This function creates a network with 1 seller and 1
+    buyer of each product (and an extra node to be initial leader),
+    such that we can check that the purchase amounts
+    going through are correct, i.e., that they equal price of item * quantity sold.
+    """
+    node_dict = {
+        0: {"port": 49152,
+            "role": p2p.Role.SELLER.name,
+            "shopping list": [],
+            "selling list": [{p2p.Item.BOAR.name: 1}]*1000,},
+        1: {"port": 49153,
+            "role": p2p.Role.SELLER.name,
+            "shopping list": [],
+            "selling list": [{p2p.Item.FISH.name: 1}]*1000,},
+        2: {"port": 49154,
+            "role": p2p.Role.SELLER.name,
+            "shopping list": [],
+            "selling list": [{p2p.Item.SALT.name: 1}]*1000,},
+        3: {"port": 49155,
+            "role": p2p.Role.BUYER.name,
+            "shopping list": [{p2p.Item.BOAR.name: 1}]*1000,
+            "selling list": [],},
+        4: {"port": 49156,
+            "role": p2p.Role.BUYER.name,
+            "shopping list": [{p2p.Item.FISH.name: 1}]*1000,
+            "selling list": [],},
+        5: {"port": 49157,
+            "role": p2p.Role.BUYER.name,
+            "shopping list": [{p2p.Item.SALT.name: 1}]*1000,
+            "selling list": [],},  
+        6: {"port": 49158,
+            "role": p2p.Role.BUYER.name,
+            "shopping list": [{p2p.Item.SALT.name: 1}]*1000,
+            "selling list": [],},   
+    }
+    network = main.dict_to_network(node_dict=node_dict)
+    main.run_network(network=network, run_time=500)
     return
 
 def test_6_nodes():
@@ -252,6 +292,7 @@ if __name__ == "__main__":
     # test_no_salt_sellers()
     # test_not_enough_boar()
     # test_buyer_and_seller_does_both()
-    test_elections_work()
+    # test_elections_work()
+    test_payment_amounts_are_correct()
 
 
