@@ -5,8 +5,6 @@ import sys
 import time
 from multiprocessing import Process
 
-from fontTools.misc.cython import returns
-
 import p2p_node as p2p
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)

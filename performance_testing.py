@@ -1,10 +1,11 @@
-
+import math
 import pickle
 import random
 import socket
 import time
 from multiprocessing import Process
 
+import numpy as np
 import pandas as pd
 
 import p2p_node as p2p
@@ -62,12 +63,15 @@ if __name__ == "__main__":
         y_data2 = []
 
         for i, row in timestamps.iterrows():
-            if row["acked_time"] is not None:
+            if not math.isnan(row["acked_time"]):
                 x_data2.append(row.acked_time - row.init_time)
                 y_data2.append(random.random() * 20)
-            if row["received_time"] is not None:
+            if not math.isnan(row["received_time"]):
                 x_data.append(row.received_time - row.init_time)
                 y_data.append(random.random() * 20)
+
+        print(f"Average node {label} response time to ack: {np.average(x_data2)}")
+        print(f"Average node {label} response time to response: {np.average(x_data)}")
 
         plt.scatter(x_data, y_data)
         frame = plt.gca()
