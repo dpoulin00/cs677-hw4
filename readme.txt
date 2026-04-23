@@ -18,5 +18,7 @@ do so by deleting "node_0_timestamps.csv" and running the file. Be warned that i
 many requests.
 
 
-
+Dependencies:
+pandas
+numpy
 
