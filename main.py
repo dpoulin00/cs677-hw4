@@ -1,8 +1,12 @@
 import pickle
 import random
 import socket
+import sys
 import time
 from multiprocessing import Process
+
+from fontTools.misc.cython import returns
+
 import p2p_node as p2p
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -116,10 +120,15 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int, stop_network:bool
 
 
 if __name__ == "__main__":
+    num_nodes = int(sys.argv[1])
+
+    if type(num_nodes) is not int or num_nodes < 6:
+        print("please pass an integer greater than 5")
+        exit(1)
     start_port = 49152
-    network = make_random_network(num_nodes=5, start_port=start_port)
+    network = make_random_network(num_nodes=6, start_port=start_port)
     # for
-    run_network(network=network, run_time=300)
+    run_network(network=network, run_time=330)
     pass
 
 

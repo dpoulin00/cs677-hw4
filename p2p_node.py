@@ -118,6 +118,7 @@ class P2PNode:
         self.leader_clock = {id:0 for id in node_keys}
         self.is_buyer = is_buyer
         self.is_seller = is_seller
+        self.stopped = False
         self.is_leader = False
         self.leader = None  # Used to determine who the leader if. If None, we'll assume there is no leader.
         self.running = False  # Set to true on startup, set to false on receiving a STOP msg
@@ -186,6 +187,7 @@ class P2PNode:
         Closes server socket.
         """
         print(f"{datetime.now()}, status, node {self.id} stopping")
+        time.sleep(10)
         self.running = False
         self.server_socket.close()
         # Save all data for debugging
@@ -218,6 +220,8 @@ class P2PNode:
         with ThreadPoolExecutor(max_workers=100) as executor:
             while self.running:
                 # Accept msgs. If a STOP shows up, we need to break out of loop.
+                if self.stopped:
+                    break
                 stopped = self.accept_msgs(executor=executor)
                 if stopped:
                     break
@@ -267,10 +271,9 @@ class P2PNode:
                         self.review_node_log()
                 elif self.is_leader:
                     # If we are the leader, check if we've caught up to any pending
-                    # transcations in the leader log. If so, handle these.
+                    # transactions in the leader log. If so, handle these.
                     # Also check if it's been long enough that we need to resign.
                     # When we come back after resigning, start a new election.
-                    # FIXME: make time between winning election and resigning random
                     # by choosing a random time delta at time of winning.
                     self.review_leader_log()
                     last_election_ts = self.get_most_recent_election(status=ActionStatus.DONE.name)
@@ -280,8 +283,11 @@ class P2PNode:
                     else:  # This shouldn't happen, but in we get here before log is saved, we won't resign yet
                         next_resign_ts = datetime.now() + timedelta(0, 10)
                     if datetime.now() > next_resign_ts:
-                        self.resign(sleep=True)
-                        self.elect()
+                        stopped = self.resign(sleep=True)
+                        if not stopped:
+                            self.elect()
+                        else:
+                            self.stopped = True
         return
     
     def accept_msgs(self, executor) -> bool:
@@ -758,6 +764,7 @@ class P2PNode:
         self.leader_log_lock.acquire_lock()
         self.is_leader = False
         self.leader = None
+        stopped = False
         # Save leader log and leader clock to disk
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
@@ -788,7 +795,7 @@ class P2PNode:
                 time.sleep(1)
                 wait_time += 1
             print(f"{datetime.now()}, node, node {self.id} is back online")
-        return
+        return stopped
     
     def elect(self):
         """
