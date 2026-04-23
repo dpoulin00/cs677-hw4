@@ -160,6 +160,7 @@ class P2PNode:
         Called by parent process to start node running.
         Sets self.running to True, sets up socket, and starts run loop.
         """
+        print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
         # Set up server socket
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -173,10 +174,9 @@ class P2PNode:
         self.clock_lock = threading.Lock()
         self.leader_clock_lock = threading.Lock()
         self.revenue_lock = threading.Lock()
-        # Start run loop (after waiting 1 second so all nodes are online)
-        time.sleep(1)
+        # Start run loop (after waiting 5 seconds so all nodes are online)
+        time.sleep(10)
         self.running = True
-        print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
         self.run_loop()
         return
     
@@ -500,7 +500,7 @@ class P2PNode:
         # send ACKs, as this can mess up the logging.
         if self.is_leader:
             self.send_msg(msg=msg, dest=dest)
-            print(f"{datetime.now()}, {uid}, node {self.id} sent ack")
+            #print(f"{datetime.now()}, {uid}, node {self.id} sent ack")
         return
     
     def recieve_ack(self, msg):
@@ -509,7 +509,7 @@ class P2PNode:
         transaction as ACKED in the node log.
         """
         uid = msg["uid"]
-        print(f"{datetime.now()}, {uid}, node {self.id} received ack")
+        #print(f"{datetime.now()}, {uid}, node {self.id} received ack")
         self.update_node_log(uid=uid, timestamp=datetime.now(),
                              status=ActionStatus.ACKED.name)
         return
@@ -539,7 +539,7 @@ class P2PNode:
                                 type=BuyMsgType.INIT.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
 
-        print(f"{datetime.now()}, buy, node {self.id} is buying {item}")
+        print(f"{datetime.now()}, {uid}, node {self.id} is buying {item}")
         # Send out request
         msg = dict(
             uid = uid,
@@ -575,6 +575,16 @@ class P2PNode:
                 postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
                                     & (postings["item"] == row["item"])
                                     & (postings["sender"] != self.id) ]
+                
+                # While there is no way to tell which of two concurrent events
+                # come first, the following sort does ensure that if an request's clock
+                # is strictly before another request's clock, then it will come before
+                # that request in our dataframe, and thus sell first too.
+                postings = postings.reset_index(drop=True)
+                clock_df = pd.DataFrame(postings["clock"].to_list())
+                clock_cols = clock_df.columns.to_list()
+                postings[clock_cols] = clock_df
+                postings = postings.sort_values(by=clock_cols).reset_index(drop=True)
                 # Figure out which postings we'll buy items from
                 postings["cumsum"] = postings["quantity"].cumsum()
                 postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,
@@ -644,7 +654,7 @@ class P2PNode:
         self.append_to_node_log(uid=uid, timestamp=datetime.now(), clock=clock_lock_copy,
                                 type=BuyMsgType.RESTOCK.name, item=item, quantity=quantity,
                                 status=ActionStatus.STARTED.name)
-        print(f"{datetime.now()}, restock, node {self.id} is restocking {item}")
+        print(f"{datetime.now()}, {uid}, node {self.id} is restocking {item}")
         # Send out request
         msg = dict(
             uid=uid,
@@ -769,7 +779,7 @@ class P2PNode:
         self.leader_log[self.leader_log["status"] != ActionStatus.DONE.name].to_csv(self.leader_log_path, index=False)
         with open(self.leader_clock_path, "wb") as file:
             pickle.dump(self.leader_clock, file)
-            print(f"{str(self.leader_clock)}")
+            #print(f"{str(self.leader_clock)}")
         self.leader_log = self.leader_log.drop(self.leader_log.index)  # wipe out leader log from this node
         self.leader_log_lock.release_lock()
         self.leader_clock_lock.release_lock()
@@ -796,7 +806,7 @@ class P2PNode:
                 wait_time += 1
             if stopped:
                 return stopped
-            print(f"{datetime.now()}, node, node {self.id} is back online")
+            print(f"{datetime.now()}, status, node {self.id} is back online")
         return stopped
     
     def elect(self):
@@ -915,7 +925,7 @@ class P2PNode:
                     for i in disk_clock.keys(): disk_clock_is_old = disk_clock_is_old and disk_clock[i] <= self.leader_clock[i]
                     if not disk_clock_is_old:
                         self.leader_clock = disk_clock
-                        print(f"{str(self.leader_clock)}")
+                        #print(f"{str(self.leader_clock)}")
             # Any transactions in this node's log that haven't been
             # acked yet need to be added to leader log, otherwise
             # this leader's clock will stagnate, and this leader
