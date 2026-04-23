@@ -126,7 +126,7 @@ if __name__ == "__main__":
     start_port = 49152
     network = make_random_network(num_nodes=6, start_port=start_port)
     # for
-    run_network(network=network, run_time=330)
+    run_network(network=network, run_time=10000)
     pass
 
 

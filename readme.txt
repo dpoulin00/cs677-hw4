@@ -13,6 +13,11 @@ To choose which test, in the "if __name__ == '__main__'" block,
 change the value assigned to test_num to the value corresponding to the desired test.
 Note that we ran all tests, even though only one is currently set to run.
 
+To run the performance tests, run performance_testing.py. Note that this file by default will pull from
+the existing CSVs in the "performance test logs" directory. If you want to re-generate node_0_timestamps.csv, you can
+do so by deleting "node_0_timestamps.csv" and running the file. Be warned that it takes over an hour to process this
+many requests.
+
 
 
 
