@@ -128,7 +128,7 @@ def test_no_salt_sellers():
 def test_not_enough_boar():
     """
     Create a case where more board is requested than is available.
-    We expect to see only one board request, and only 10 board, not the
+    We expect to see only one board request, and only 10 boar, not the
     11 requested, should be sold.
     Note that the boar is requested only after several other requests,
     such that we can be sure the boar is purchased after it is stock.
@@ -307,7 +307,7 @@ if __name__ == "__main__":
 
     # To choose a test, select a number for test_num. Again, we ran all tests.
     
-    test_num = 1
+    test_num = 4
     match test_num:
         case 1:
             test_no_sellers()
