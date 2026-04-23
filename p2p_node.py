@@ -169,8 +169,8 @@ class P2PNode:
         self.clock_lock = threading.Lock()
         self.leader_clock_lock = threading.Lock()
         self.revenue_lock = threading.Lock()
-        # Start run loop (after waiting 1 second so all nodes are online)
-        time.sleep(1)
+        # Start run loop (after waiting 10 seconds so all nodes are online)
+        time.sleep(10)
         self.running = True
         print(f"{datetime.now()}, status, node {self.id} starting using port {self.port_number}")
         self.run_loop()
@@ -184,6 +184,7 @@ class P2PNode:
         """
         print(f"{datetime.now()}, status, node {self.id} stopping")
         self.running = False
+        time.sleep(15)
         self.server_socket.close()
         # Save all data for debugging
         with self.node_log_lock:
@@ -555,6 +556,17 @@ class P2PNode:
                 postings = postings[ (postings["type"] == ActionType.RESTOCK.name)
                                     & (postings["item"] == row["item"])
                                     & (postings["sender"] != self.id) ]
+                
+                # While there is no way to tell which of two concurrent events
+                # come first, the following sort does ensure that if an request's clock
+                # is strictly before another request's clock, then it will come before
+                # that request in our dataframe, and thus sell first too.
+                postings = postings.reset_index(drop=True)
+                clock_df = pd.DataFrame(postings["clock"].to_list())
+                clock_cols = clock_df.columns.to_list()
+                postings[clock_cols] = clock_df
+                postings = postings.sort_values(by=clock_cols)
+
                 # Figure out which postings we'll buy items from
                 postings["cumsum"] = postings["quantity"].cumsum()
                 postings["left over"] = np.where(postings["cumsum"] - requested_quantity > 0,

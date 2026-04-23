@@ -307,7 +307,7 @@ if __name__ == "__main__":
 
     # To choose a test, select a number for test_num. Again, we ran all tests.
     
-    test_num = 1
+    test_num = 9
     match test_num:
         case 1:
             test_no_sellers()
