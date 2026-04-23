@@ -8,6 +8,11 @@ The program will run for 10,000 seconds (about 3 hours). Then, it will terminate
 close the terminal.
 
 
+To run the tests, run "python test.py".
+To choose which test, in the "if __name__ == '__main__'" block,
+change the value assigned to test_num to the value corresponding to the desired test.
+Note that we ran all tests, even though only one is currently set to run.
+
 
 
 
