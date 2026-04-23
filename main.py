@@ -80,7 +80,7 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int, stop_network:bool
     # Delete leader logs and leaders clocks that are left over from a previous run.
     log_path = Path("leader_log.csv")
     clock_path = Path("leader_clock")
-    timestamp_path = Path("node_0_request_timestamps.csv")
+    timestamp_path = Path("node_0_request_timestamps_redone.csv")
     if log_path.exists():
         log_path.unlink()
     if clock_path.exists():
@@ -118,7 +118,8 @@ def run_network(network: dict[int, p2p.P2PNode], run_time:int, stop_network:bool
 if __name__ == "__main__":
     start_port = 49152
     network = make_random_network(num_nodes=5, start_port=start_port)
-    run_network(network=network, run_time=10000)
+    # for
+    run_network(network=network, run_time=300)
     pass
 
 
