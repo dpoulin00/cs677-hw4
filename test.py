@@ -225,10 +225,11 @@ def test_elections_work():
 
     We expect, as different nodes become leader, for transactions to continue.
     Further, we expect first for node 9 to be the leader, and then for node 8 to
-    become leader when node 9 resigns (after node 8 wins teh election). As soon
+    become leader (after a pause period)
+    when node 9 resigns (after node 8 wins teh election). As soon
     as node 9 comes back online, it should start and win an election to become leader,
-    but if node 8 resigns while node 9 is still down, node 7 should start and win an
-    election.
+    but if node 8 resigns while node 9 is still down, node 7 should (after a pause period)
+    start and win an election.
     """
     network = main.make_random_network(num_nodes=10, start_port=49152)
     main.run_network(network=network, run_time=10000)
@@ -242,6 +243,8 @@ def test_payment_amounts_are_correct():
     buyer of each product (and an extra node to be initial leader),
     such that we can check that the purchase amounts
     going through are correct, i.e., that they equal price of item * quantity sold.
+    In this case, qunatity is 1, so payments will just be the price
+    of item sold.
     """
     node_dict = {
         0: {"port": 49152,
@@ -304,9 +307,10 @@ if __name__ == "__main__":
     # just as easily remove the STOP message altogether, and leave it to the user to close the terminal when
     # theyre done).
 
-    # To choose a test, select a number for test_num. Again, we ran all tests.
+    # To choose a test, update the number for test_num. Again, we ran all tests,
+    # though we ran them one at a time, and only one is currnetly set to run.
     
-    test_num = 4
+    test_num = 9
     match test_num:
         case 1:
             test_no_sellers()
