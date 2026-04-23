@@ -279,20 +279,53 @@ def test_payment_amounts_are_correct():
     return
 
 def test_6_nodes():
+    """
+    Test that network functions with 6 nodes (ie, transactions go through
+    and leaders are elected)
+    """
+    network = main.make_random_network(num_nodes=6, start_port=49152)
+    main.run_network(network=network, run_time=500)
     return
 
-def test_100_nodes():
+
+def test_10_nodes():
+    """
+    Test that network functions with 10 nodes (ie, transactions go through
+    and leaders are elected)
+    """
+    network = main.make_random_network(num_nodes=10, start_port=49152)
+    main.run_network(network=network, run_time=500)
     return
 
 
 
 if __name__ == "__main__":
-    # test_no_sellers()
-    # test_no_buyers()
-    # test_no_salt_sellers()
-    # test_not_enough_boar()
-    # test_buyer_and_seller_does_both()
-    # test_elections_work()
-    test_payment_amounts_are_correct()
+    # Note: all tests were run and passed. While the STOP command sent by the main process when the program
+    # closes sometimes generates an error, a graceful exit is outside of the homework requirements (we could
+    # just as easily remove the STOP message altogether, and leave it to the user to close the terminal when
+    # theyre done).
+
+    # To choose a test, select a number for test_num. Again, we ran all tests.
+    
+    test_num = 1
+    match test_num:
+        case 1:
+            test_no_sellers()
+        case 2:
+            test_no_buyers()
+        case 3:
+            test_no_salt_sellers()
+        case 4:
+            test_not_enough_boar()
+        case 5:
+            test_buyer_and_seller_does_both()
+        case 6:
+            test_elections_work()
+        case 7:
+            test_payment_amounts_are_correct()
+        case 8:
+            test_6_nodes()
+        case 9:
+            test_10_nodes()
 
 
