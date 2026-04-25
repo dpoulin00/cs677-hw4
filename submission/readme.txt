@@ -7,6 +7,7 @@ Once you do so, the program will generate a random network with that many nodes 
 The program will run for 10,000 seconds (about 3 hours). Then, it will terminate. To stop it prematurely,
 close the terminal.
 
+
 To run the tests, run "python test.py".
 To choose which test, in the "if __name__ == '__main__'" block,
 change the value assigned to test_num to the value corresponding to the desired test.
@@ -18,7 +19,5 @@ do so by deleting "node_0_timestamps.csv" and running the file. Be warned that i
 many requests.
 
 
-Dependencies:
-pandas
-numpy
+
 
