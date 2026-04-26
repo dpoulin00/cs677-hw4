@@ -1,0 +1,140 @@
+import copy
+import json
+import math
+import pickle
+import random
+import socket
+import select
+import time
+import threading
+from typing import Dict
+import uuid
+from concurrent.futures.thread import ThreadPoolExecutor
+from datetime import timedelta
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+import numpy as np
+import pandas as pd
+from pandas.core.interchange.dataframe_protocol import DataFrame
+import enums
+
+# Make sure threads fail loudly
+def custom_hook(args):
+    print(f"Thread failed: {args.exc_type.__name__}: {args.exc_value}")
+threading.excepthook = custom_hook
+
+class Warehouse:
+    def __init__(self, id:int, port:int, nodes:dict[int, int]):
+        self.id = id
+        self.port = port
+        self.server_socket = socket.socket()
+        self.running = False
+        # Quantities
+        self.inv = dict(
+            salt = 0,
+            boar = 0,
+            fish = 0,
+        )
+        # locks
+        self.locks = dict(
+        )
+        # nodes
+        self.nodes = nodes
+    
+    def start(self):
+        # Start port
+        self.server_socket = socket.socket()
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.settimeout(100)  # Time out so we can gracefully exit once we stop seeing messages.
+        self.server_socket.bind((socket.gethostname(), self.port))
+        self.server_socket.listen(100000)
+        # set up locks
+        self.locks = dict(
+            salt = threading.Lock(),
+            boar = threading.Lock(),
+            fish = threading.Lock(),
+        )
+        # Start running
+        time.sleep(10)
+        self.running = True
+        print(f"{datetime.now()}, warehouse, node {self.id} start on port {self.port}")
+        self.run_loop()
+        return
+    
+    def run_loop(self):
+        while self.running:
+            self.listen()
+
+    def listen(self):
+        # Open thread executor, and enter listening loop
+        with ThreadPoolExecutor(max_workers=100) as executor:
+            # We will continue this loop until there are no incoming messages.
+            while self.running and select.select([self.server_socket], [], [], 0.1)[0]:
+                socket_connection, addr = self.server_socket.accept()
+                data = socket_connection.recv(4096)
+                socket_connection.close()
+                try:
+                    msg = pickle.loads(data)
+                except Exception as e:
+                    # Helpful for debugging multiple threads, processes
+                    print(f"Pickle exception:")
+                    print(e)
+                else:
+                    executor.submit(self.handle_msg, msg)
+            return
+    
+    def handle_msg(self, msg):
+        match msg["type"]:
+            case enums.MsgType.BUY.name:
+                self.handle_buy(msg)
+            case enums.MsgType.RESTOCK.name:
+                self.handle_restock(msg)
+            case enums.MsgType.UPDATE.name:
+                self.handle_update(msg)
+            case enums.ControlMsgType.STOP.name:
+                self.stop()
+        return
+    
+    def stop(self):
+        self.running = False
+        return
+
+    def handle_buy(self, msg:dict):
+        item = msg["item"].lower()
+        ordered = msg["quantity"]
+        in_store = self.inv[item]
+        # Lock attribute, update, and release.
+        with self.locks[item]:
+            sold = (ordered if in_store > ordered else in_store)
+            self.inv[item] -= sold
+        # Return msg
+        reply = enums.TxMsg(uid=msg["uid"],
+                            sender=self.id,
+                            type=enums.MsgType.BUY_REPLY.name,
+                            item=item,
+                            quantity=sold).to_dict()
+        self.send_msg(reply, dest=msg["sender"])
+        return
+    
+    def handle_restock(self, msg:dict):
+        return
+    
+    def handle_update(self, msg:dict):
+        return
+    
+    def send_msg(self, msg:dict, dest:int):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
+                dest_port = self.nodes[dest]
+                node_socket.connect((socket.gethostname(), dest_port))
+                serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
+                node_socket.sendall(serialized_msg)
+                node_socket.close()
+        except Exception as e:
+            print(f"Haven't implement fault control for warehouse")
+            raise Exception
+        return
+
+
+
