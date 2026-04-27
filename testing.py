@@ -29,6 +29,10 @@ def recieve_msg(my_socket:socket.socket):
 
 class TestWarehouse(unittest.TestCase):
     def setUp(self):
+        """
+        Start up warehouse node and create port
+        for it to talk to.
+        """
         # Set up warehouse node
         self.test_id = 0
         self.test_port = 49152
@@ -55,6 +59,10 @@ class TestWarehouse(unittest.TestCase):
         return
     
     def tearDown(self):
+        """
+        Stop warehouse node and close socket.
+        Also shut down thread executory.
+        """
         stop_msg = dict(type=enums.ControlMsgType.STOP.name)
         send_msg(stop_msg, dest_port=self.wh_port)
         self.socket.close()
@@ -62,6 +70,9 @@ class TestWarehouse(unittest.TestCase):
         return
     
     def send_rcv_msg(self, uid, type, item, quantity):
+        """
+        Send msg to warehouse and get reply back.
+        """
         # Send request to the warehouse node
         outgoing_msg = enums.TxMsg(uid=uid,
                                    sender=self.test_id,
@@ -75,7 +86,8 @@ class TestWarehouse(unittest.TestCase):
     
     def test_buy(self):
         """
-        Buy command. Expect 0 items bought, since no stock.
+        Buy 5 items.
+        Expect 0 items bought, since no stock.
         """
         # Send a buy request to the warehouse node, and check we get expected reply
         uid = uuid.uuid4()
@@ -90,7 +102,8 @@ class TestWarehouse(unittest.TestCase):
     
     def test_restock(self):
         """
-        Restock.
+        Restock 5 items.
+        Expect all restock items to go through.
         """
         # Send a buy request to the warehouse node, and check we get expected reply
         uid = uuid.uuid4()
@@ -105,7 +118,8 @@ class TestWarehouse(unittest.TestCase):
     
     def test_buy_full_stock(self):
         """
-        Restock, then buy. Expect 5 items bought, since there should be stock.
+        Restock 5 items, then buy 5.
+        Expect 5 items bought, since there should be stock.
         """
         # Send a restock request to the warehouse node
         r_uid = uuid.uuid4()
@@ -124,7 +138,8 @@ class TestWarehouse(unittest.TestCase):
     
     def test_buy_more_than_stock(self):
         """
-        Restock, then buy. Expect 5 items bought, since there should be stock.
+        Restock 5 items then buy 6.
+        Expect 5 items bought, since that's all that's in stock.
         """
         # Send a restock request to the warehouse node
         r_uid = uuid.uuid4()
@@ -143,7 +158,9 @@ class TestWarehouse(unittest.TestCase):
     
     def test_buy_less_than_stock(self):
         """
-        Restock, then buy. Expect 5 items bought, since there should be stock.
+        Restock 5 items, then buy 4, then buy 1.
+        Expect 1 item bought in last purchase,
+        since that should be all that's left in stock.
         """
         # Send a restock request to the warehouse node
         r_uid = uuid.uuid4()
@@ -165,6 +182,5 @@ class TestWarehouse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-    #warehouse_test1_buy(use_process=True)
 
 
