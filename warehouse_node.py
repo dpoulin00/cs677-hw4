@@ -26,21 +26,22 @@ threading.excepthook = custom_hook
 
 class Warehouse:
     def __init__(self, id:int, port:int, nodes:dict[int, int]):
+        # Set up node properties
         self.id = id
         self.port = port
-        self.server_socket = socket.socket()
         self.running = False
+        # Set up objects for communication
+        self.nodes = nodes
+        self.server_socket = socket.socket()
+        self.handled_uids = []
         # Quantities
+        self.locks = dict()
         self.inv = dict(
             SALT = 0,
             BOAR = 0,
             FISH = 0,
         )
-        # locks
-        self.locks = dict(
-        )
-        # nodes
-        self.nodes = nodes
+        return
     
     def start(self):
         # Start port
@@ -56,17 +57,23 @@ class Warehouse:
             FISH = threading.Lock(),
         )
         # Start running
-        time.sleep(10)
         self.running = True
         print(f"{datetime.now()}, warehouse, node {self.id} start on port {self.port}")
         self.run_loop()
         return
     
     def run_loop(self):
+        """
+        Top of call stack. Called from main.py to create subprocess.
+        When we're done, set self.running to False so this function returns.
+        """
         while self.running:
             self.listen()
 
     def listen(self):
+        """
+        Listen for msgs and spawn threads to deal with each.
+        """
         # Open thread executor, and enter listening loop
         with ThreadPoolExecutor(max_workers=100) as executor:
             # We will continue this loop until there are no incoming messages.
@@ -85,24 +92,37 @@ class Warehouse:
             return
     
     def handle_msg(self, msg):
+        """
+        Called to handle msgs.
+        Parses msg type and calls corresponding function.
+        """
         match msg["type"]:
             case enums.MsgType.BUY.name:
                 self.handle_buy(msg)
             case enums.MsgType.RESTOCK.name:
                 self.handle_restock(msg)
-            case enums.MsgType.UPDATE.name:
-                self.handle_update(msg)
             case enums.ControlMsgType.STOP.name:
                 self.stop()
+            case _:
+                print("Invalid msg type sent to warehouse.")
+                raise Exception
         return
     
     def stop(self):
+        """
+        On recieving a STOP msg, call this fct to shut down the warehouse.
+        """
         print(f"{datetime.now()}, warehouse, node {self.id} stopping")
         self.server_socket.close()
         self.running = False
         return
 
     def handle_buy(self, msg:dict):
+        """
+        On recieving a BUY, call this msg to handle it.
+        Checks BUY against how much inventory we have.
+        Sells as much as possible, and sends a reply msg back.
+        """
         item = msg["item"]
         ordered = msg["quantity"]
         in_store = self.inv[item]
@@ -110,6 +130,7 @@ class Warehouse:
         with self.locks[item]:
             sold = (ordered if in_store > ordered else in_store)
             self.inv[item] -= sold
+        self.handled_uids.append(msg["uid"])  # append is thread safe
         # Return msg
         reply = enums.TxMsg(uid=msg["uid"],
                             sender=self.id,
@@ -120,11 +141,16 @@ class Warehouse:
         return
     
     def handle_restock(self, msg:dict):
+        """
+        Called on receiving a RESTOCK msg.
+        Adds items to inventory.
+        """
         item = msg["item"]
         stocked = msg["quantity"]
         # Lock attribute, update, and release.
         with self.locks[item]:
             self.inv[item] += stocked
+        self.handled_uids.append(msg["uid"])  # append is thread safe
         # Return msg
         reply = enums.TxMsg(uid=msg["uid"],
                             sender=self.id,
@@ -134,10 +160,12 @@ class Warehouse:
         self.send_msg(reply, dest=msg["sender"])
         return
     
-    def handle_update(self, msg:dict):
-        return
-    
     def send_msg(self, msg:dict, dest:int):
+        """
+        Sends outgoing msgs to dest.
+        We also need to handle fault tolerance in case a trader goes
+        down.
+        """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_socket:
                 dest_port = self.nodes[dest]
@@ -146,7 +174,7 @@ class Warehouse:
                 node_socket.sendall(serialized_msg)
                 node_socket.close()
         except Exception as e:
-            print(f"Haven't implement fault control for warehouse")
+            print(f"Haven't implement fault tolerance for warehouse")
             raise Exception
         return
 

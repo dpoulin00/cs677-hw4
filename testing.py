@@ -61,42 +61,65 @@ class TestWarehouse(unittest.TestCase):
         self.thread_executor.shutdown()
         return
     
-    def test_buy(self):
-        # Send a buy request to the warehouse node
-        uid = uid=uuid.uuid4()
+    def send_rcv_msg(self, uid, type, item, quantity):
+        # Send request to the warehouse node
         outgoing_msg = enums.TxMsg(uid=uid,
                                    sender=self.test_id,
-                                   type=enums.MsgType.BUY.name,
-                                   item=enums.Item.SALT.name,
-                                   quantity=5).to_dict()
+                                   type=type,
+                                   item=item,
+                                   quantity=quantity).to_dict()
         send_msg(outgoing_msg, dest_port=self.wh_port)
         # Receive reply from warehouse
         msg = recieve_msg(self.socket)
-        expected_msg = dict(uid=uid,
-                            sender=1,
-                            type=enums.MsgType.BUY_REPLY.name,
-                            item=enums.Item.SALT.name,
-                            quantity=0)
-        self.assertDictEqual(msg, expected_msg)
+        return msg
+    
+    def test_1_buy(self):
+        """
+        Buy command. Expect 0 items bought, since no stock.
+        """
+        # Send a buy request to the warehouse node, and check we get expected reply
+        uid = uuid.uuid4()
+        reply = self.send_rcv_msg(uid=uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=5)
+        expected_reply = dict(uid=uid,
+                              sender=1,
+                              type=enums.MsgType.BUY_REPLY.name,
+                              item=enums.Item.SALT.name,
+                              quantity=0)
+        self.assertDictEqual(reply, expected_reply)
         return
     
-    def test_restock(self):
+    def test_2_restock(self):
+        """
+        Restock.
+        """
+        # Send a buy request to the warehouse node, and check we get expected reply
+        uid = uuid.uuid4()
+        reply = self.send_rcv_msg(uid=uid, type=enums.MsgType.RESTOCK.name, item=enums.Item.SALT.name, quantity=5)
+        expected_reply = dict(uid=uid,
+                              sender=1,
+                              type=enums.MsgType.RESTOCK_REPLY.name,
+                              item=enums.Item.SALT.name,
+                              quantity=5)
+        self.assertDictEqual(reply, expected_reply)
+        return
+    
+    def test_3_restock_buy(self):
+        """
+        Restock, then buy. Expect 5 items bought, since there should be stock.
+        """
         # Send a restock request to the warehouse node
-        uid = uid=uuid.uuid4()
-        outgoing_msg = enums.TxMsg(uid=uid,
-                                   sender=self.test_id,
-                                   type=enums.MsgType.RESTOCK.name,
-                                   item=enums.Item.SALT.name,
-                                   quantity=5).to_dict()
-        send_msg(outgoing_msg, dest_port=self.wh_port)
-        # Receive reply from warehouse
-        msg = recieve_msg(self.socket)
-        expected_msg = dict(uid=uid,
-                            sender=1,
-                            type=enums.MsgType.RESTOCK_REPLY.name,
-                            item=enums.Item.SALT.name,
-                            quantity=5)
-        self.assertDictEqual(msg, expected_msg)
+        r_uid = uuid.uuid4()
+        r_reply = self.send_rcv_msg(uid=r_uid, type=enums.MsgType.RESTOCK.name, item=enums.Item.SALT.name, quantity=5)
+        time.sleep(1)  # Wait so restock has time to go through
+        # Send buy request
+        b_uid = uuid.uuid4()
+        reply = self.send_rcv_msg(uid=b_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=5)
+        expected_reply = dict(uid=b_uid,
+                              sender=1,
+                              type=enums.MsgType.BUY_REPLY.name,
+                              item=enums.Item.SALT.name,
+                              quantity=5)
+        self.assertDictEqual(reply, expected_reply)
         return
 
 
