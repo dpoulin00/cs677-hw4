@@ -73,6 +73,7 @@ class Warehouse:
     def listen(self):
         """
         Listen for msgs and spawn threads to deal with each.
+        Only exception to this is STOP, which we handle here so we can break out of loop.
         """
         # Open thread executor, and enter listening loop
         with ThreadPoolExecutor(max_workers=100) as executor:
@@ -81,12 +82,10 @@ class Warehouse:
                 socket_connection, addr = self.server_socket.accept()
                 data = socket_connection.recv(4096)
                 socket_connection.close()
-                try:
-                    msg = pickle.loads(data)
-                except Exception as e:
-                    # Helpful for debugging multiple threads, processes
-                    print(f"Pickle exception:")
-                    print(e)
+                msg = pickle.loads(data)
+                if msg["type"] == enums.ControlMsgType.STOP.name:
+                    self.stop()
+                    break
                 else:
                     executor.submit(self.handle_msg, msg)
             return

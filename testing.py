@@ -73,7 +73,7 @@ class TestWarehouse(unittest.TestCase):
         msg = recieve_msg(self.socket)
         return msg
     
-    def test_1_buy(self):
+    def test_buy(self):
         """
         Buy command. Expect 0 items bought, since no stock.
         """
@@ -88,7 +88,7 @@ class TestWarehouse(unittest.TestCase):
         self.assertDictEqual(reply, expected_reply)
         return
     
-    def test_2_restock(self):
+    def test_restock(self):
         """
         Restock.
         """
@@ -103,7 +103,7 @@ class TestWarehouse(unittest.TestCase):
         self.assertDictEqual(reply, expected_reply)
         return
     
-    def test_3_restock_buy(self):
+    def test_buy_full_stock(self):
         """
         Restock, then buy. Expect 5 items bought, since there should be stock.
         """
@@ -113,13 +113,53 @@ class TestWarehouse(unittest.TestCase):
         time.sleep(1)  # Wait so restock has time to go through
         # Send buy request
         b_uid = uuid.uuid4()
-        reply = self.send_rcv_msg(uid=b_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=5)
+        b_reply = self.send_rcv_msg(uid=b_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=5)
         expected_reply = dict(uid=b_uid,
                               sender=1,
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5)
-        self.assertDictEqual(reply, expected_reply)
+        self.assertDictEqual(b_reply, expected_reply)
+        return
+    
+    def test_buy_more_than_stock(self):
+        """
+        Restock, then buy. Expect 5 items bought, since there should be stock.
+        """
+        # Send a restock request to the warehouse node
+        r_uid = uuid.uuid4()
+        r_reply = self.send_rcv_msg(uid=r_uid, type=enums.MsgType.RESTOCK.name, item=enums.Item.SALT.name, quantity=5)
+        time.sleep(1)  # Wait so restock has time to go through
+        # Send buy request
+        b_uid = uuid.uuid4()
+        b_reply = self.send_rcv_msg(uid=b_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=6)
+        expected_reply = dict(uid=b_uid,
+                              sender=1,
+                              type=enums.MsgType.BUY_REPLY.name,
+                              item=enums.Item.SALT.name,
+                              quantity=5)
+        self.assertDictEqual(b_reply, expected_reply)
+        return
+    
+    def test_buy_less_than_stock(self):
+        """
+        Restock, then buy. Expect 5 items bought, since there should be stock.
+        """
+        # Send a restock request to the warehouse node
+        r_uid = uuid.uuid4()
+        r_reply = self.send_rcv_msg(uid=r_uid, type=enums.MsgType.RESTOCK.name, item=enums.Item.SALT.name, quantity=5)
+        time.sleep(1)  # Wait so restock has time to go through
+        # Send two buy request, first less than full stock, than full remaining.
+        b1_uid = uuid.uuid4()
+        b1_reply = self.send_rcv_msg(uid=b1_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=4)
+        b2_uid = uuid.uuid4()
+        b2_reply = self.send_rcv_msg(uid=b2_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=1)
+        expected_reply = dict(uid=b2_uid,
+                              sender=1,
+                              type=enums.MsgType.BUY_REPLY.name,
+                              item=enums.Item.SALT.name,
+                              quantity=1)
+        self.assertDictEqual(b2_reply, expected_reply)
         return
 
 
