@@ -32,9 +32,9 @@ class Warehouse:
         self.running = False
         # Quantities
         self.inv = dict(
-            salt = 0,
-            boar = 0,
-            fish = 0,
+            SALT = 0,
+            BOAR = 0,
+            FISH = 0,
         )
         # locks
         self.locks = dict(
@@ -51,9 +51,9 @@ class Warehouse:
         self.server_socket.listen(100000)
         # set up locks
         self.locks = dict(
-            salt = threading.Lock(),
-            boar = threading.Lock(),
-            fish = threading.Lock(),
+            SALT = threading.Lock(),
+            BOAR = threading.Lock(),
+            FISH = threading.Lock(),
         )
         # Start running
         time.sleep(10)
@@ -97,11 +97,12 @@ class Warehouse:
         return
     
     def stop(self):
+        print(f"{datetime.now()}, warehouse, node {self.id} stopping")
         self.running = False
         return
 
     def handle_buy(self, msg:dict):
-        item = msg["item"].lower()
+        item = msg["item"]
         ordered = msg["quantity"]
         in_store = self.inv[item]
         # Lock attribute, update, and release.
