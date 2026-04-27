@@ -98,6 +98,7 @@ class Warehouse:
     
     def stop(self):
         print(f"{datetime.now()}, warehouse, node {self.id} stopping")
+        self.server_socket.close()
         self.running = False
         return
 
@@ -119,6 +120,18 @@ class Warehouse:
         return
     
     def handle_restock(self, msg:dict):
+        item = msg["item"]
+        stocked = msg["quantity"]
+        # Lock attribute, update, and release.
+        with self.locks[item]:
+            self.inv[item] += stocked
+        # Return msg
+        reply = enums.TxMsg(uid=msg["uid"],
+                            sender=self.id,
+                            type=enums.MsgType.RESTOCK_REPLY.name,
+                            item=item,
+                            quantity=stocked).to_dict()
+        self.send_msg(reply, dest=msg["sender"])
         return
     
     def handle_update(self, msg:dict):
