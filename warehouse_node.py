@@ -88,7 +88,7 @@ class Warehouse:
                     break
                 else:
                     executor.submit(self.handle_msg, msg)
-            return
+        return
     
     def handle_msg(self, msg):
         """
@@ -171,10 +171,11 @@ class Warehouse:
                 node_socket.connect((socket.gethostname(), dest_port))
                 serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
                 node_socket.sendall(serialized_msg)
-                node_socket.close()
         except Exception as e:
             print(f"Haven't implement fault tolerance for warehouse")
             raise Exception
+        finally:
+            node_socket.close()
         return
 
 

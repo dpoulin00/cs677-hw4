@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Self
 
 
 # We define several class that inherit enums. These are used throughout
@@ -49,12 +50,13 @@ class ActionStatus(Enum):
 
 
 class TxMsg:
-    def __init__(self, uid, sender, type, item, quantity):
+    def __init__(self, uid, sender: int, type: str, item: str, quantity: int):
         self.uid = uid
         self.sender = sender
         self.type = type
         self.item = item
         self.quantity = quantity
+        self.is_done = False
     
     def to_dict(self) -> dict:
         d = dict(
@@ -65,15 +67,21 @@ class TxMsg:
             quantity = self.quantity,
         )
         return d
+    
+    def mark_done(self) -> Self:
+        self.is_done = True
+        return self
 
-class CacheMsg:
-    def __init__(self, uid, sender, type, salt_delta, boar_delta, fish_delta):
+class ElectMsg:
+    def __init__(self, uid, sender: int, type: str):
         self.sender = sender
         self.uid = uid
         self.type = type
-        self.salt_delta = salt_delta
-        self.boar_delta = boar_delta
-        self.fish_delta = fish_delta
     
     def to_dict(self) -> dict:
-        raise Exception("not implemented yet")
+        d = dict(
+            sender = self.sender,
+            uid = self.uid,
+            type = self.type,
+        )
+        return d
