@@ -34,6 +34,11 @@ class Warehouse:
         self.nodes = nodes
         self.server_socket = socket.socket()
         self.handled_uids = []
+        # stores ID in here whenever it receives a request from a leader, used for fault tolerance
+        self.leader_ids = set()
+        # Used to store and process incoming requests
+        self.warehouse_log = pd.DataFrame(
+            columns=["uid", "sender", "clock", "type", "item", "quantity", "status"])
         # Quantities
         self.locks = dict()
         self.inv = dict(
@@ -87,6 +92,8 @@ class Warehouse:
                     self.stop()
                     break
                 else:
+                    if msg["sender"] is not None and msg["sender"] not in self.leader_ids:
+                        self.leader_ids.add(msg["sender"])
                     executor.submit(self.handle_msg, msg)
         return
     

@@ -10,7 +10,6 @@ class Role(Enum):
     """Defines types of nodes."""
     BUYER = 0
     SELLER = 1
-    BUYER_AND_SELLER = 2
 
 class Item(Enum):
     """Defines types of nodes."""
@@ -50,13 +49,15 @@ class ActionStatus(Enum):
 
 
 class TxMsg:
-    def __init__(self, uid, sender: int, type: str, item: str, quantity: int):
+    def __init__(self, uid, sender: int, type: str, item: str, quantity: int, peer_id:int=None, clock:dict=None):
         self.uid = uid
         self.sender = sender
         self.type = type
         self.item = item
         self.quantity = quantity
         self.is_done = False
+        self.peer_id = peer_id
+        self.clock = clock
     
     def to_dict(self) -> dict:
         d = dict(
@@ -65,6 +66,8 @@ class TxMsg:
             type = self.type,
             item = self.item,
             quantity = self.quantity,
+            clock = self.clock,
+            peer_id = self.peer_id
         )
         return d
     
