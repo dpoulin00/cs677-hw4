@@ -195,20 +195,19 @@ class P2PNode:
                 else:
                     if msg["quantity"] == 0:
                         if msg["passed_cache"]:
-                            print(f"{datetime.now()} {msg["uid"]} made by node {self.id} to buy {msg["item"]} failed. Inventory for {msg["item"]} depleted.")
+                            print(f"{datetime.now()}, {msg["uid"]}, made by node {self.id} to buy {msg["item"]} failed. Inventory for {msg["item"]} depleted.")
                         else:
                             print(
-                                f"{datetime.now()} {msg["uid"]} made by node {self.id} to buy {msg["item"]} failed. Inventory for {msg["item"]} expected to be depleted.")
+                                f"{datetime.now()}. {msg["uid"]}, made by node {self.id} to buy {msg["item"]} failed. Inventory for {msg["item"]} expected to be depleted.")
                     else:
                         print(
-                            f"{datetime.now()} {msg["uid"]} succeeded. Node {self.id} purchased {msg["quantity"]} {msg["item"]}")
+                            f"{datetime.now()}, {msg["uid"]}, succeeded. Node {self.id} purchased {msg["quantity"]} {msg["item"]}")
             case enums.MsgType.RESTOCK_REPLY.name:
-                print(f"{datetime.now()} {msg["uid"]} made by node {msg["peer_id"]} succeeded. Inventory restocked with {msg["quantity"]} {msg["item"]}")
+                print(f"{datetime.now()}, {msg["uid"]}, made by node {msg["peer_id"]} succeeded. Inventory restocked with {msg["quantity"]} {msg["item"]}")
             case enums.MsgType.SYNC_DATA.name:
                 self.locks["REPLICATED_LOCK"].acquire()
                 self.replicated_totals = msg["totals"]
                 self.locks["REPLICATED_LOCK"].release()
-                test = 2
 
 
         return
@@ -241,7 +240,7 @@ class P2PNode:
             self.send_msg(outgoing_msg, chosen_trader)
         except:
             # if we've entered here, one of our leaders has failed. Remove leader from leader set and pick another
-            print(f"{datetime.now()} {uid} Node {self.id} failed to reach leader when purchasing. Retrying to purchase {item} with a new chosen trader")
+            print(f"{datetime.now()}, {uid}. Node {self.id} failed to reach leader when purchasing. Retrying to purchase {item} with a new chosen trader")
             self.traders.pop(chosen_trader)
             chosen_trader = random.choice(list(self.traders.keys()))
             self.send_msg(outgoing_msg, chosen_trader)
@@ -277,7 +276,7 @@ class P2PNode:
         try:
             self.send_msg(outgoing_msg, chosen_trader)
         except:
-            print(f"{datetime.now()} {uid} Node {self.id} failed to reach leader when restocking. Retrying to restock {item} with a new chosen trader")
+            print(f"{datetime.now()}, {uid} Node {self.id} failed to reach leader when restocking. Retrying to restock {item} with a new chosen trader")
             self.traders.pop(chosen_trader)
             chosen_trader = random.choice(list(self.traders.keys()))
             self.send_msg(outgoing_msg, chosen_trader)

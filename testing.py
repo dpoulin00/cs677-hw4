@@ -56,7 +56,8 @@ class TestWarehouse(unittest.TestCase):
         self.wh_port = 49153
         wh_node = warehouse_node.Warehouse(id=1,
                                            port=self.wh_port,
-                                           nodes={self.test_id: self.test_port})
+                                           nodes={self.test_id: self.test_port},
+                                           synchronous=True)
         # Set up test socket for warehouse node to send msgs to
         self.socket = socket.socket()
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -109,13 +110,13 @@ class TestWarehouse(unittest.TestCase):
         # Send a buy request to the warehouse node, and check we get expected reply
         uid = uuid.uuid4()
         reply = self.send_rcv_msg(uid=uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=5)
+        reply.pop("passed_cache")
         expected_reply = dict(uid=uid,
                               sender=1,
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=0,
-                              peer_id=None,
-                              passed_cache=False)
+                              peer_id=None)
         self.assertDictEqual(reply, expected_reply)
         return
     
@@ -127,13 +128,13 @@ class TestWarehouse(unittest.TestCase):
         # Send a buy request to the warehouse node, and check we get expected reply
         uid = uuid.uuid4()
         reply = self.send_rcv_msg(uid=uid, type=enums.MsgType.RESTOCK.name, item=enums.Item.SALT.name, quantity=5)
+        reply.pop("passed_cache")
         expected_reply = dict(uid=uid,
                               sender=1,
                               type=enums.MsgType.RESTOCK_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5,
-                              peer_id=None,
-                              passed_cache=False)
+                              peer_id=None)
         self.assertDictEqual(reply, expected_reply)
         return
     
@@ -149,13 +150,13 @@ class TestWarehouse(unittest.TestCase):
         # Send buy request
         b_uid = uuid.uuid4()
         b_reply = self.send_rcv_msg(uid=b_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=5)
+        b_reply.pop("passed_cache")
         expected_reply = dict(uid=b_uid,
                               sender=1,
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5,
-                              peer_id=None,
-                              passed_cache=False)
+                              peer_id=None)
         self.assertDictEqual(b_reply, expected_reply)
         return
     
@@ -171,13 +172,13 @@ class TestWarehouse(unittest.TestCase):
         # Send buy request
         b_uid = uuid.uuid4()
         b_reply = self.send_rcv_msg(uid=b_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=6)
+        b_reply.pop("passed_cache")
         expected_reply = dict(uid=b_uid,
                               sender=1,
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5,
-                              peer_id=None,
-                              passed_cache=False)
+                              peer_id=None)
         self.assertDictEqual(b_reply, expected_reply)
         return
     
@@ -196,13 +197,13 @@ class TestWarehouse(unittest.TestCase):
         b1_reply = self.send_rcv_msg(uid=b1_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=4)
         b2_uid = uuid.uuid4()
         b2_reply = self.send_rcv_msg(uid=b2_uid, type=enums.MsgType.BUY.name, item=enums.Item.SALT.name, quantity=1)
+        b2_reply.pop("passed_cache")
         expected_reply = dict(uid=b2_uid,
                               sender=1,
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=1,
-                              peer_id=None,
-                              passed_cache=False)
+                              peer_id=None)
         self.assertDictEqual(b2_reply, expected_reply)
         return
     

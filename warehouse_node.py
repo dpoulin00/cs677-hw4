@@ -4,6 +4,8 @@ import math
 import pickle
 import random
 import socket
+from multiprocessing.sharedctypes import synchronized
+
 import select
 import time
 import threading
@@ -98,7 +100,7 @@ class Warehouse:
                     if msg["sender"] is not None and msg["sender"] not in self.leader_ids:
                         self.leader_ids.add(msg["sender"])
                     executor.submit(self.handle_msg, msg)
-                if datetime.now() > self.next_sync_timestamp:
+                if datetime.now() > self.next_sync_timestamp and not self.synchronous:
                     self.resync_totals()
 
         return
@@ -122,7 +124,7 @@ class Warehouse:
                 self.send_msg(msg, node_id)
             self.next_sync_timestamp = datetime.now() + timedelta(0, 2)
         except:
-            print(f"{datetime.now()} Leader {cur_leader }detected to be down when resyncing inventory. Removing leader {cur_leader} from potential leaders")
+            print(f"{datetime.now()}, Leader {cur_leader} detected to be down when resyncing inventory. Removing leader {cur_leader} from potential leaders")
             self.leader_ids.remove(cur_leader)
     
     def handle_msg(self, msg):
@@ -181,7 +183,7 @@ class Warehouse:
         try:
             self.send_msg(reply, dest=msg["sender"])
         except:
-            print(f"{datetime.now()} {msg["uid"]} Leader {msg["sender"]} detected to have gone down from warehouse, resending buy reply to a new leader")
+            print(f"{datetime.now()}, {msg["uid"]}, Leader {msg["sender"]} detected to have gone down from warehouse, resending buy reply to a new leader")
             self.leader_ids.remove(msg["sender"])
             msg_sender = random.choice(list(self.leader_ids))
             self.send_msg(reply, msg_sender)
@@ -210,7 +212,7 @@ class Warehouse:
         try:
             self.send_msg(reply, dest=msg["sender"])
         except:
-            print(f"{datetime.now()} {msg["uid"]} Leader {msg["sender"]} detected to have gone down from warehouse, resending restock reply to a new leader")
+            print(f"{datetime.now()}, {msg["uid"]}, Leader {msg["sender"]} detected to have gone down from warehouse, resending restock reply to a new leader")
             self.leader_ids.remove(msg["sender"])
             msg_sender = random.choice(list(self.leader_ids))
             self.send_msg(reply, msg_sender)
