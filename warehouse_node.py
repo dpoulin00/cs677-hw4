@@ -25,11 +25,12 @@ def custom_hook(args):
 threading.excepthook = custom_hook
 
 class Warehouse:
-    def __init__(self, id:int, port:int, nodes:dict[int, int]):
+    def __init__(self, id:int, port:int, nodes:dict[int, int], synchronous=False):
         # Set up node properties
         self.id = id
         self.port = port
         self.running = False
+        self.synchronous = synchronous
         # Set up objects for communication
         self.nodes = nodes
         self.server_socket = socket.socket()
@@ -38,7 +39,7 @@ class Warehouse:
         self.leader_ids = set()
         # Used to store and process incoming requests
         self.warehouse_log = pd.DataFrame(
-            columns=["uid", "sender", "clock", "type", "item", "quantity", "status"])
+            columns=["uid", "sender", "type", "item", "quantity", "status"])
         # Quantities
         self.locks = dict()
         self.inv = dict(
@@ -46,6 +47,7 @@ class Warehouse:
             BOAR = 0,
             FISH = 0,
         )
+        self.next_sync_timestamp = datetime.now()
         return
     
     def start(self):
@@ -60,6 +62,7 @@ class Warehouse:
             SALT = threading.Lock(),
             BOAR = threading.Lock(),
             FISH = threading.Lock(),
+            SYNCHRONOUS = threading.Lock(),
         )
         # Start running
         self.running = True
@@ -95,13 +98,41 @@ class Warehouse:
                     if msg["sender"] is not None and msg["sender"] not in self.leader_ids:
                         self.leader_ids.add(msg["sender"])
                     executor.submit(self.handle_msg, msg)
+                if datetime.now() > self.next_sync_timestamp:
+                    self.resync_totals()
+
         return
+
+    def resync_totals(self):
+        self.locks[enums.Item.SALT.name].acquire()
+        self.locks[enums.Item.BOAR.name].acquire()
+        self.locks[enums.Item.FISH.name].acquire()
+        totals_copy = copy.deepcopy(self.inv)
+        self.locks[enums.Item.SALT.name].release()
+        self.locks[enums.Item.BOAR.name].release()
+        self.locks[enums.Item.FISH.name].release()
+        msg = dict(
+            type = enums.MsgType.SYNC_DATA.name,
+            totals = totals_copy
+        )
+        cur_leader = -1
+        try:
+            for node_id in self.leader_ids:
+                cur_leader = node_id
+                self.send_msg(msg, node_id)
+            self.next_sync_timestamp = datetime.now() + timedelta(0, 2)
+        except:
+            print(f"{datetime.now()} Leader {cur_leader }detected to be down when resyncing inventory. Removing leader {cur_leader} from potential leaders")
+            self.leader_ids.remove(cur_leader)
     
     def handle_msg(self, msg):
         """
         Called to handle msgs.
         Parses msg type and calls corresponding function.
         """
+        # use lock to make requests synchronous in the case of the non-caching approach
+        if self.synchronous:
+            self.locks["SYNCHRONOUS"].acquire()
         match msg["type"]:
             case enums.MsgType.BUY.name:
                 self.handle_buy(msg)
@@ -112,6 +143,8 @@ class Warehouse:
             case _:
                 print("Invalid msg type sent to warehouse.")
                 raise Exception
+        if self.synchronous:
+            self.locks["SYNCHRONOUS"].release()
         return
     
     def stop(self):
@@ -142,8 +175,17 @@ class Warehouse:
                             sender=self.id,
                             type=enums.MsgType.BUY_REPLY.name,
                             item=item,
-                            quantity=sold).to_dict()
-        self.send_msg(reply, dest=msg["sender"])
+                            quantity=sold,
+                            peer_id=msg["peer_id"],
+                            passed_cache=True).to_dict()
+        try:
+            self.send_msg(reply, dest=msg["sender"])
+        except:
+            print(f"{datetime.now()} {msg["uid"]} Leader {msg["sender"]} detected to have gone down from warehouse, resending buy reply to a new leader")
+            self.leader_ids.remove(msg["sender"])
+            msg_sender = random.choice(list(self.leader_ids))
+            self.send_msg(reply, msg_sender)
+
         return
     
     def handle_restock(self, msg:dict):
@@ -162,8 +204,16 @@ class Warehouse:
                             sender=self.id,
                             type=enums.MsgType.RESTOCK_REPLY.name,
                             item=item,
-                            quantity=stocked).to_dict()
-        self.send_msg(reply, dest=msg["sender"])
+                            quantity=stocked,
+                            peer_id=msg["peer_id"]
+                            ).to_dict()
+        try:
+            self.send_msg(reply, dest=msg["sender"])
+        except:
+            print(f"{datetime.now()} {msg["uid"]} Leader {msg["sender"]} detected to have gone down from warehouse, resending restock reply to a new leader")
+            self.leader_ids.remove(msg["sender"])
+            msg_sender = random.choice(list(self.leader_ids))
+            self.send_msg(reply, msg_sender)
         return
     
     def send_msg(self, msg:dict, dest:int):
@@ -178,9 +228,6 @@ class Warehouse:
                 node_socket.connect((socket.gethostname(), dest_port))
                 serialized_msg = pickle.dumps(msg, -1)  # -1 is used to pick best representation
                 node_socket.sendall(serialized_msg)
-        except Exception as e:
-            print(f"Haven't implement fault tolerance for warehouse")
-            raise Exception
         finally:
             node_socket.close()
         return

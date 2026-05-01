@@ -3,6 +3,7 @@ import random
 import socket
 import sys
 import time
+from datetime import datetime, timedelta
 from multiprocessing import Process
 import threading
 import enums
@@ -20,7 +21,7 @@ def custom_hook(args):
     print(f"Thread failed: {args.exc_type.__name__}: {args.exc_value}")
 threading.excepthook = custom_hook
 
-def make_random_network(num_nodes: int, start_port, num_traders:int) -> dict[int, p2p.P2PNode]:
+def make_random_network(num_nodes: int, start_port, num_traders:int, synchronous=False) -> dict[int, p2p.P2PNode]:
     """
     Creates a random network of nodes, with random roles.
     Returns dict, whose keys are ports and whose values are the nodes.
@@ -31,12 +32,16 @@ def make_random_network(num_nodes: int, start_port, num_traders:int) -> dict[int
     # Iterate through to initialize all nodes.
     warehouse_port = 0
     for id in range(num_nodes):
+        leader_time_to_die = None
         curr_port_number = node_ports[id]
         if id == 0:
             warehouse_port = curr_port_number - 1
             wh_node = warehouse_node.Warehouse(id=num_nodes,
                                                port=warehouse_port,
-                                               nodes=node_ports)
+                                               nodes=node_ports,
+                                               synchronous=synchronous)
+        if id == num_nodes - 1:
+            leader_time_to_die = datetime.now() + timedelta(0, 40)
             network[warehouse_port] = wh_node
         curr_port_number = node_ports[id]
         role = random.choice(list(enums.Role)).name
@@ -47,16 +52,15 @@ def make_random_network(num_nodes: int, start_port, num_traders:int) -> dict[int
         # the node via the following two bools.
         is_buyer = (True if role in [enums.Role.BUYER.name] else False)
         is_seller = (True if role in [enums.Role.SELLER.name] else False)
-        # FIXME: remove debugging statements
-        is_buyer = False
-        is_seller = True
         network[curr_port_number] = p2p.P2PNode(id=id,
                                                 port_number=curr_port_number,
                                                 is_buyer=is_buyer,
                                                 is_seller=is_seller,
                                                 nodes=node_view_of_network,
                                                 warehouse_port=warehouse_port,
-                                                num_traders = num_traders
+                                                num_traders = num_traders,
+                                                synchronized=synchronous,
+                                                leader_time_to_die=leader_time_to_die
                                                 )
     return network
 
@@ -99,13 +103,13 @@ if __name__ == "__main__":
     # num_nodes = int(sys.argv[1])
 
     # FIXME: remove debug statement
-    num_nodes = 2
+    num_nodes = 10
 
     # if type(num_nodes) is not int or num_nodes < 6:
     #     print("please pass an integer greater than 5")
     #     exit(1)
     start_port = 49153
-    network = make_random_network(num_nodes=num_nodes, start_port=start_port, num_traders=1)
+    network = make_random_network(num_nodes=num_nodes, start_port=start_port, num_traders=4, synchronous=False)
     run_network(network=network, run_time=10000)
 
 

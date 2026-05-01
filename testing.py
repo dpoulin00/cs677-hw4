@@ -114,8 +114,8 @@ class TestWarehouse(unittest.TestCase):
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=0,
-                              clock=None,
-                              peer_id=None)
+                              peer_id=None,
+                              passed_cache=False)
         self.assertDictEqual(reply, expected_reply)
         return
     
@@ -132,8 +132,8 @@ class TestWarehouse(unittest.TestCase):
                               type=enums.MsgType.RESTOCK_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5,
-                              clock=None,
-                              peer_id=None)
+                              peer_id=None,
+                              passed_cache=False)
         self.assertDictEqual(reply, expected_reply)
         return
     
@@ -154,8 +154,8 @@ class TestWarehouse(unittest.TestCase):
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5,
-                              clock=None,
-                              peer_id=None)
+                              peer_id=None,
+                              passed_cache=False)
         self.assertDictEqual(b_reply, expected_reply)
         return
     
@@ -176,8 +176,8 @@ class TestWarehouse(unittest.TestCase):
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=5,
-                              clock=None,
-                              peer_id=None)
+                              peer_id=None,
+                              passed_cache=False)
         self.assertDictEqual(b_reply, expected_reply)
         return
     
@@ -201,8 +201,8 @@ class TestWarehouse(unittest.TestCase):
                               type=enums.MsgType.BUY_REPLY.name,
                               item=enums.Item.SALT.name,
                               quantity=1,
-                              clock=None,
-                              peer_id=None)
+                              peer_id=None,
+                              passed_cache=False)
         self.assertDictEqual(b2_reply, expected_reply)
         return
     
