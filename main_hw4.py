@@ -10,6 +10,11 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 from pathlib import Path
 
+# Make sure threads fail loudly
+def custom_hook(args):
+    print(f"Thread failed: {args.exc_type.__name__}: {args.exc_value}")
+threading.excepthook = custom_hook
+
 
 def make_random_network(num_nodes: int, start_port) -> dict[int, p2p.P2PNode]:
     """

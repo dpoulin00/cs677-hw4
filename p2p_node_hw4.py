@@ -40,20 +40,20 @@ class Item(Enum):
     FISH = 1
     BOAR = 2
 
-class BuyMsgType(Enum):
-    """Defines buy msg types."""
-    INIT = 0  # Buyer sends to leader to start buy process (multicast, increment clock)
-    RESPONSE = 1  # Leader responds to buyer (unicast)
-    PAYMENT = 2  # Leader pays seller (unicast)
-    RESTOCK = 3  # Seller sends to leader to stock new inventory (unicast, increment clock)
-    FINISH_TRANSACTION = 4 # Sent to buyer to signal the end of the transaction
+class MsgType(Enum):
+    """Defines msg types."""
+    BUY = 0  # Msg to trader to warehouse requesting to purchase item.
+    RESTOCK = 1  # Msg to trader to warehouse requesting to sell item.
+    BUY_REPLY = 2  # Msg from warehouse to trader to node, accepting or denying purchase.
+    RESTOCK_REPLY = 3  # Msg from warehouse to trader to node, accepting or denying sell.
+    UPDATE = 4  # Msg from trader to warehouse sending an update to inventory.
+    UPDATE_REPLY = 5  # Msg from warehouse to trader indicating if update was accepted.
 
 class ElecMsgType(Enum):
     """Defines election msg types."""
-    RESIGN = 0  # Leader multicasts to all nodes to resign (multicast, increment clock)
-    ELECT = 1  # Node tries to elect self. (multicast to upstream nodes)
-    OKAY = 2  # Response to ELECT when we have higher ID. (unicast)
-    IWON = 3  # If nobody responds to ELECT, we're the new leader. (multicast)
+    ELECT = 0  # Node tries to elect self. (multicast to upstream nodes)
+    OKAY = 1  # Response to ELECT when we have higher ID. (unicast)
+    IWON = 2  # If nobody responds to ELECT, we're the new leader. (multicast)
 
 class ControlMsgType(Enum):
     """
@@ -61,16 +61,6 @@ class ControlMsgType(Enum):
     Mostly for communication with parent process, except ACK, which is for ACKing transactions.
     """
     STOP = 0  # Parent process sends to shuts down the node
-    # Below msgs could be used to include stop conditions for network
-    REPORT_CMD = 1  # Parent process requests status from nodes
-    REPORT = 2  # Node sends status to parent process
-    ACK = 3  # Leader sends this back to each node after certain msgs. A lack of this tells node leader resigned.
-
-class ActionType(Enum):
-    """Define action types (for log and msgs)"""
-    ELECT = 0
-    BUY = 1
-    RESTOCK = 2
 
 class ActionStatus(Enum):
     """
@@ -78,18 +68,7 @@ class ActionStatus(Enum):
     Used in node logs, let's us know what's started, acked, done, and what needs resending.
     """
     STARTED = 0  # Action started, but not acked by leader
-    ACKED = 1  # Action acked by leader
-    DONE = 2  # Action finished.
-    NEEDS_RESEND = 3  # Action needs to be resent
-
-class ActionProcessStatus(Enum):
-    """
-    Defines action status (from leader perspective).
-    Let's us know what transactions still need to be processed.
-    """
-    RECIEVED = 0  # Action recieved, not done yet
-    DONE = 1  # Action done
-
+    DONE = 1  # Action finished.
 
 class P2PNode:
     def __init__(self, id: int, port_number: int, is_buyer: bool, is_seller: bool,
